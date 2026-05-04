@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+set -eu
+
+cd "$(dirname "$0")/.."
+
+if [ -x ".venv/Scripts/python.exe" ]; then
+  PYTHON=".venv/Scripts/python.exe"
+elif [ -x ".venv/bin/python" ]; then
+  PYTHON=".venv/bin/python"
+else
+  PYTHON="python"
+fi
+
+"$PYTHON" -m ruff check backend
+"$PYTHON" -m black --check backend
+npm --prefix frontend run lint
+npm --prefix frontend run stylelint

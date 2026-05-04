@@ -1,0 +1,156 @@
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${NGINX_PORT:-8080}:80"
+    volumes:
+      - ./ops/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    env_file: .env.example
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      seekdb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz').read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker-default:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    env_file: .env.example
+    command: celery -A app.celery_app:celery_app worker -Q default --loglevel=INFO --concurrency=2
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker-ingest:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    env_file: .env.example
+    command: celery -A app.celery_app:celery_app worker -Q ingest --loglevel=INFO --concurrency=1
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker-rag:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    env_file: .env.example
+    command: celery -A app.celery_app:celery_app worker -Q rag --loglevel=INFO --concurrency=2
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker-plan:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    env_file: .env.example
+    command: celery -A app.celery_app:celery_app worker -Q plan --loglevel=INFO --concurrency=2
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker-docx:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    env_file: .env.example
+    command: celery -A app.celery_app:celery_app worker -Q docx --loglevel=INFO --concurrency=1
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  beat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    env_file: .env.example
+    command: celery -A app.celery_app:celery_app beat --loglevel=INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  flower:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    env_file: .env.example
+    command: celery -A app.celery_app:celery_app flower --port=5555
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  seekdb:
+    image: "${SEEKDB_IMAGE:-docker.1ms.run/oceanbase/seekdb:latest}"
+    environment:
+      ROOT_PASSWORD: "${SEEKDB_ROOT_PASSWORD:-zhongmei-root}"
+      SEEKDB_DATABASE: "${SEEKDB_DATABASE:-zhongmei}"
+      CPU_COUNT: "${SEEKDB_CPU_COUNT:-2}"
+      MEMORY_LIMIT: "${SEEKDB_MEMORY_LIMIT:-2G}"
+    ports:
+      - "${SEEKDB_PORT:-12881}:2881"
+      - "${SEEKDB_DASHBOARD_PORT:-12886}:2886"
+    volumes:
+      - seekdb-data:/var/lib/oceanbase
+    healthcheck:
+      test: ["CMD-SHELL", "bash -ec 'cat < /dev/null > /dev/tcp/127.0.0.1/2881'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  seekdb-data:
