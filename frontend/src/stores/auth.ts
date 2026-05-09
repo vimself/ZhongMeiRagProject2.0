@@ -90,5 +90,19 @@ export const useAuthStore = defineStore('auth', {
         localStorage.setItem(USER_KEY, JSON.stringify(this.user))
       }
     },
+    async refreshProfile() {
+      const response = await apiClient.get('/user/profile')
+      const profile = response.data
+      if (this.user) {
+        this.user = {
+          ...this.user,
+          display_name: profile.display_name,
+          role: profile.role,
+          require_password_change: profile.require_password_change,
+        }
+        localStorage.setItem(USER_KEY, JSON.stringify(this.user))
+      }
+      return profile
+    },
   },
 })

@@ -23,6 +23,8 @@ services:
       RUN_ALEMBIC: "1"
     ports:
       - "${API_PORT:-8000}:8000"
+    volumes:
+      - uploads-data:/app/backend/uploads
     depends_on:
       redis:
         condition: service_healthy
@@ -156,3 +158,4 @@ services:
 
 volumes:
   seekdb-data:
+  uploads-data:

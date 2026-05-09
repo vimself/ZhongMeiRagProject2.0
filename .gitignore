@@ -28,11 +28,13 @@ test-results/
 .idea/
 .vscode/
 .claude/
+.qoder/
 .DS_Store
 Thumbs.db
 
 # Runtime data
 storage/
+backend/uploads/
 logs/
 tmp/
 *.log

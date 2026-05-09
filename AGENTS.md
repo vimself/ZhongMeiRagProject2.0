@@ -29,5 +29,10 @@ origin=https://github.com/vimself/ZhongMeiRagProject2.0.git
 
 - Stage 1 基础设施与工程骨架已完成，进度记录见 `docs/stage-1-infrastructure-progress.md`。
 - Stage 2 数据层与认证内核已完成，进度记录见 `docs/stage-2-data-auth-progress.md`。
+- Stage 3 用户与后台管理已完成，进度记录见 `docs/stage-3-user-admin-progress.md`。
 - 后端认证入口统一位于 `/api/v2/auth/*`，包含登录、刷新、登出、改密与当前用户查询。
+- 个人中心 API 位于 `/api/v2/user/*`，包含资料读取/更新、头像上传/删除、改密。
+- 管理员 API 位于 `/api/v2/admin/*`，包含用户 CRUD、重置密码、停用、审计日志查询。
 - 首次部署创建管理员账号时，在迁移完成后运行 `python -m app.cli.seed_admin`，并确保 `ADMIN_SEED_PASSWORD` 已配置为非示例值。
+- 头像文件存储在 `uploads/avatars/{user_id}/` 目录，Docker Compose 通过 `uploads-data:/app/backend/uploads` 持久化。
+- 前端 `.stylelintrc.json` 配置了 Vue `:deep` 伪类支持，修改样式时请注意。

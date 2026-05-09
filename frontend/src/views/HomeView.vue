@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { Key, Monitor, Service, SwitchButton, Tickets } from '@element-plus/icons-vue'
+import {
+  Key,
+  Monitor,
+  Setting,
+  Service,
+  SwitchButton,
+  Tickets,
+  User as UserIcon,
+} from '@element-plus/icons-vue'
 import ElButton from 'element-plus/es/components/button/index.mjs'
 import ElIcon from 'element-plus/es/components/icon/index.mjs'
 import ElTag from 'element-plus/es/components/tag/index.mjs'
@@ -39,9 +47,13 @@ async function logout() {
       <div class="account">
         <div class="identity">
           <span>{{ auth.user?.display_name }}</span>
-          <ElTag type="success" effect="dark">Stage 2</ElTag>
+          <ElTag type="success" effect="dark">Stage 3</ElTag>
         </div>
         <div class="actions">
+          <ElButton :icon="UserIcon" @click="router.push('/profile')">个人中心</ElButton>
+          <ElButton v-if="auth.isAdmin" :icon="Setting" @click="router.push('/admin/users')">
+            用户管理
+          </ElButton>
           <ElButton :icon="Key" @click="passwordDialogVisible = true">改密</ElButton>
           <ElButton :icon="SwitchButton" @click="logout">登出</ElButton>
         </div>
