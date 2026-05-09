@@ -20,10 +20,11 @@ origin=https://github.com/vimself/ZhongMeiRagProject2.0.git
 
 ## 工程约定
 
-- 项目采用 monorepo：`backend/`、`frontend/`、`docs/`、`ops/`、`docker/`。
+- 项目采用 monorepo：`backend/`、`frontend/`、`docs/`、`ops/`、`docker/`、`DeepseekOcrApi/`。
 - 后端目标运行时为 Python 3.11 + FastAPI + Celery。
 - 前端目标运行时为 Vue 3 + TypeScript + Vite。
 - 基础设施通过 Docker Compose 启动，配置文件集中放在 `ops/` 和 `docker/`。
+- OCR 服务使用自托管 DeepSeek-OCR-2，部署在校园网工作站 `222.195.4.65:8899`，通过 SSH 反向隧道连接，不再使用阿里云 DashScope OCR。
 
 ## 当前实现状态
 
@@ -42,3 +43,4 @@ origin=https://github.com/vimself/ZhongMeiRagProject2.0.git
 - 头像文件存储在 `uploads/avatars/{user_id}/` 目录，Docker Compose 通过 `uploads-data:/app/backend/uploads` 持久化。
 - 前端 `.stylelintrc.json` 配置了 Vue `:deep` 伪类支持，修改样式时请注意。
 - Stage 4 不迁移旧 RAG 项目数据，所有测试数据均为新建数据。抛弃旧版本的数据库表设计和所有数据，全部按按照系统架构重新设计，并创建新的数据进行测试。
+- 文档 OCR 识别使用校园网工作站自托管 DeepSeek-OCR-2 API（`222.195.4.65:8899`），代码位于 `DeepseekOcrApi/` 目录，API 采用异步上传-轮询-下载模式。

@@ -12,7 +12,7 @@
 >
 > - **LLM**：阿里 DashScope `qwen3.6-plus`（兼容 OpenAI 协议）
 > - **Embedding**：阿里 DashScope `qwen3-vl-embedding`（多模态，1024 维）
-> - **PDF/OCR**：阿里 `deepseek-ocr` API
+> - **PDF/OCR**：自托管 DeepSeek-OCR-2（校园网工作站 `222.195.4.65:8899`，通过 SSH 反向隧道连接）
 > - **Agent**：LangGraph（全链路）
 > - **数据层**：**SeekDB 单库**（关系 + 向量 + 稀疏全文索引一体化）
 > - **方案文档生成**：**python-docx + docxtpl + 甲方 `custom-reference.docx` 模板直写**（摒弃 Markdown → Quarto → docx）
@@ -78,7 +78,7 @@ frontend/src/
 | 速率限制 | **slowapi**（入口）+ **Celery `rate_limit`**（下游）+ Redis token bucket | 三层 |
 | LLM 客户端 | **OpenAI SDK（兼容 DashScope）+ tenacity 重试 + 自建令牌桶** | `qwen3.6-plus` |
 | Embedding | **DashScope 官方 SDK + 批量合并 + Redis 缓存** | `qwen3-vl-embedding` |
-| OCR | **httpx.AsyncClient → DashScope `deepseek-ocr`** | Celery worker 内调用 |
+| OCR | **httpx.AsyncClient → 自托管 DeepSeek-OCR-2（校园网工作站 `222.195.4.65:8899`）** | Celery worker 内调用；异步上传-轮询-下载模式 |
 | Agent | **LangGraph 0.3 + RedisSaver** | 节点化 + 多 worker 可恢复 |
 | 数据层 | **SeekDB 单库**（兼容 MySQL 协议 + 原生向量/稀疏列） | 所有关系表 + Track A/B 索引 |
 | DB 驱动 | **SQLAlchemy 2.0 async + asyncmy** + **SeekDB SDK**（向量列） | 关系走 ORM，向量走专用客户端 |
@@ -145,7 +145,10 @@ graph TB
     subgraph Cloud["阿里云 DashScope"]
         LLM[qwen3.6-plus]
         EMB[qwen3-vl-embedding]
-        OCR[deepseek-ocr]
+    end
+
+    subgraph Campus["校园网工作站 (222.195.4.65)"]
+        OCR[DeepSeek-OCR-2 :8899]
     end
 
     UI -->|HTTPS/SSE| NG --> API
@@ -183,8 +186,8 @@ graph TB
 **异步段（Celery `ingest` 队列）**：
 ```
 ingest.process （幂等：SELECT ... FOR UPDATE SKIP LOCKED）
-  ├─ 1. upload-to-ocr         → DashScope deepseek-ocr
-  ├─ 2. fetch-ocr-result      → markdown + 页级 blocks + assets + 每块 bbox/page
+  ├─ 1. upload-to-ocr         → POST 上传 PDF 到自托管 DeepSeek-OCR-2（校园网工作站 222.195.4.65:8899/upload）
+  ├─ 2. poll-and-fetch-ocr    → 轮询 /status/{session_id} → 完成后 GET /result/{session_id}/markdown 获取 markdown + 下载图片
   ├─ 3. parse-outline         → 解析章节树：从 OCR 标题层级或正则（`第X章 / X.Y / X.Y.Z`）构建章节路径
   ├─ 4. section-aware-chunk   → 按"章节 + 语义 + 长度"三重约束切片，不跨章节
   ├─ 5. embed-batch           → DashScope qwen3-vl-embedding（批量 25）
@@ -204,7 +207,7 @@ ingest.process （幂等：SELECT ... FOR UPDATE SKIP LOCKED）
 | `bbox` | `[x, y, w, h]`（pdf 坐标系，PyMuPDF 归一化） | 高亮显示 |
 | `content_type` | `paragraph / table / image / formula / list` | 渲染差异化 + 引用提示 |
 
-**幂等与限流**（保持 v2 设计）：步骤级 `ingest_step_receipts`；向量按 `document_id` 先删后插；DashScope 统一 `services/llm/client.py`（重试 + 429 退避 + 费用统计）。
+**幂等与限流**（保持 v2 设计）：步骤级 `ingest_step_receipts`；向量按 `document_id` 先删后插；DashScope 统一 `services/llm/client.py`（重试 + 429 退避 + 费用统计）；OCR 走自托管服务，`services/ocr/client.py` 封装上传-轮询-下载流程（重试 + 超时）。
 
 ### 4.2 RAG 问答链路（LangGraph + 引用跳转 PDF）
 
@@ -528,7 +531,7 @@ PyMuPDF == 1.24.*             # 生产用：快、稳
 - HTTP：`http_requests_total / http_request_duration_seconds`
 - Celery：按 queue 成功率 / 重试率 / p95
 - RAG：`rag_first_token_seconds / rag_total_tokens / rag_retrieval_hits / rag_citations_per_answer`
-- 入库：`ingest_step_duration_seconds / ingest_ocr_latency_seconds / ingest_sections_parsed_total`
+- 入库：`ingest_step_duration_seconds / ingest_ocr_latency_seconds / ingest_sections_parsed_total`（OCR 指标采集自托管 DeepSeek-OCR-2 服务）
 - 方案助手：`plan_section_duration_seconds / plan_qa_findings_total{severity} / plan_export_duration_seconds`
 - LLM：`llm_tokens_total / llm_cost_yuan_total / llm_429_total`
 - PDF 预览：`pdf_preview_requests_total / pdf_preview_bytes_total`
@@ -551,6 +554,9 @@ PyMuPDF == 1.24.*             # 生产用：快、稳
 ## 8. 部署拓扑（Docker Compose）
 
 ### 8.1 服务清单
+
+> **外部依赖**：校园网工作站 `222.195.4.65:8899` 运行自托管 DeepSeek-OCR-2 服务，通过 SSH 反向隧道（autossh）使本机可访问。代码位于 `DeepseekOcrApi/` 目录。
+
 ```yaml
 services:
   nginx            # 443 → api / frontend / pdf（Range）
@@ -626,6 +632,7 @@ backend/
 │   ├── services/
 │   │   ├── auth / knowledge / chat / rag / ingest / search / dashboard
 │   │   ├── llm/                # DashScope 客户端 + 限流 + 缓存
+│   │   ├── ocr/                # 自托管 DeepSeek-OCR-2 客户端（上传-轮询-下载）
 │   │   ├── pdf/                # 签名 + 鉴权 + 坐标归一
 │   │   └── plan/
 │   │       ├── project_service.py
@@ -764,13 +771,13 @@ backend/
 
 #### 5.1 数据模型 + DashScope 客户端（2 天）- 最新要求：抛弃旧版本的数据库表设计和所有数据，全部按按照系统架构重新设计，并创建新的数据进行测试
 - 迁移：`documents / document_parse_results / document_assets / document_ingest_jobs / ingest_step_receipts / ingest_callback_receipts / knowledge_chunks_v2 / knowledge_page_index_v2`（含 `section_path/section_id/page_start/page_end/bbox/doc_kind/scheme_type`）。
-- `services/llm/client.py` 统一 DashScope：chat / embedding / ocr，带 tenacity + token bucket + 成本统计。
+- `services/llm/client.py` 统一 DashScope：chat / embedding，带 tenacity + token bucket + 成本统计；`services/ocr/client.py` 封装自托管 DeepSeek-OCR-2（上传-轮询-下载）。
 - **验收**：单元测试模拟 429 重试成功。
 
 #### 5.2 OCR 调度 + 章节解析（3 天）
 - `tasks/ingest.py`：`upload_to_ocr → fetch_ocr_result → parse_outline`。
 - `services/ingest/outline_parser.py`：从 OCR 标题层级/正则构章节树。
-- Mock OCR Server（本地 httpbin 风格）供测试。
+- Mock OCR Server（本地 httpbin 风格，模拟自托管 DeepSeek-OCR-2 接口）供测试。
 - **验收**：10 篇样本 PDF 章节识别准确率 ≥ 90%。
 
 #### 5.3 章节感知切片 + Embedding 批处理（3 天）
@@ -992,7 +999,59 @@ app.conf.update(
 )
 ```
 
-### 11.2 `services/llm/client.py`（DashScope 兼容 OpenAI）
+### 11.2 `services/ocr/client.py`（自托管 DeepSeek-OCR-2 客户端）
+```python
+import httpx
+import asyncio
+
+class DeepSeekOCRClient:
+    """封装 DeepSeek-OCR-2 异步上传-轮询-下载流程"""
+
+    def __init__(self, base_url: str = "http://222.195.4.65:8899"):
+        self.base_url = base_url
+        self._client = httpx.AsyncClient(timeout=300)
+
+    async def process_pdf(self, pdf_path: str, poll_interval: float = 5.0) -> dict:
+        """上传 PDF → 轮询状态 → 返回 markdown + 图片"""
+        # 1. 上传
+        with open(pdf_path, "rb") as f:
+            resp = await self._client.post(
+                f"{self.base_url}/upload",
+                files={"file": (pdf_path, f, "application/pdf")},
+            )
+        resp.raise_for_status()
+        session_id = resp.json()["session_id"]
+
+        # 2. 轮询
+        for _ in range(720):  # 最长 1 小时
+            status_resp = await self._client.get(f"{self.base_url}/status/{session_id}")
+            status = status_resp.json()["status"]
+            if status == "completed":
+                break
+            if status.startswith("failed"):
+                raise RuntimeError(f"OCR failed: {status}")
+            await asyncio.sleep(poll_interval)
+        else:
+            raise TimeoutError("OCR processing timeout")
+
+        # 3. 获取 markdown
+        md_resp = await self._client.get(f"{self.base_url}/result/{session_id}/markdown")
+        md_resp.raise_for_status()
+
+        # 4. 下载图片 zip
+        img_resp = await self._client.get(f"{self.base_url}/result/{session_id}/images")
+
+        # 5. 清理会话
+        await self._client.delete(f"{self.base_url}/session/{session_id}")
+
+        return {
+            "session_id": session_id,
+            "markdown": md_resp.json()["markdown"],
+            "images_zip": img_resp.content,
+        }
+```
+
+### 11.3 `services/llm/client.py`（DashScope 兼容 OpenAI，仅 LLM/Embedding）
 ```python
 from openai import AsyncOpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
@@ -1012,7 +1071,7 @@ async def chat_stream(messages, **kw):
             yield chunk
 ```
 
-### 11.3 SSE 路由 + 引用事件
+### 11.4 SSE 路由 + 引用事件
 ```python
 from sse_starlette.sse import EventSourceResponse
 
@@ -1028,7 +1087,7 @@ async def chat_stream(body: ChatIn, user = Depends(require_user)):
     return EventSourceResponse(event_gen())
 ```
 
-### 11.4 PDF 预览签发 & 路由
+### 11.5 PDF 预览签发 & 路由
 ```python
 # security/pdf_token.py
 def issue_pdf_token(user_id: str, document_id: str, ttl: int = 300) -> str:
@@ -1049,7 +1108,7 @@ async def preview_pdf(document_id: str, token: str = Query(...),
                                  "Cache-Control": "private, max-age=60"})
 ```
 
-### 11.5 `PlanSectionPayload`（Pydantic 严格合约）
+### 11.6 `PlanSectionPayload`（Pydantic 严格合约）
 ```python
 from typing import Literal
 from pydantic import BaseModel, Field
@@ -1089,7 +1148,7 @@ class PlanSectionPayload(BaseModel):
     citations: list[Citation] = []
 ```
 
-### 11.6 `services/plan/docx_renderer.py`（Word 直写核心）
+### 11.7 `services/plan/docx_renderer.py`（Word 直写核心）
 ```python
 from pathlib import Path
 from docx import Document
@@ -1143,7 +1202,7 @@ class DocxRenderer:
             self._inject_omml(doc, block.latex)
 ```
 
-### 11.7 Alembic 初始化
+### 11.8 Alembic 初始化
 ```bash
 alembic init alembic
 alembic revision --autogenerate -m "init"
@@ -1157,6 +1216,7 @@ alembic upgrade head
 | 风险 | 应对 |
 |------|------|
 | DashScope 配额/费用失控 | token bucket + 日预算阈值；超额降级 `qwen3-turbo` |
+| OCR 工作站不可用 | SSH 反向隧道断线自动重连（autossh）；OCR 服务健康检查 + 任务排队重试；本地可临时回退 DashScope OCR |
 | SeekDB 单机瓶颈 | 按 kb_id 分区 + HNSW/IVF_PQ 离线重建；预留主从升集群 |
 | Celery 任务积压 | Flower 告警 + 动态扩 worker；死信队列兜底 |
 | 长任务 worker OOM | 任务分段 + `--max-memory-per-child=500000`，方案助手独立 `worker-docx` |
@@ -1195,4 +1255,4 @@ alembic upgrade head
 ---
 
 > **一句话定义本方案**：
-> *把系统拆成"FastAPI 控制面 + Celery 数据面"，Redis 串联，LangGraph 节点化 Agent；DashScope 的 LLM/Embedding/OCR 作为可替换下游；全量数据（关系+向量+索引）收敛到 SeekDB 单库；RAG 答复每条都带"文档·章节·页·bbox"引用并可跳转 PDF 预览高亮；施工方案走"项目参数结构化 + 章节级 RAG + 多 Agent 协同 + 一致性校验 + Word 模板高保真渲染"路线；在一台 16C/32G Docker 主机上稳定服务 20 人级并发，并为后续水平扩展/云化留足接口。*
+> *把系统拆成"FastAPI 控制面 + Celery 数据面"，Redis 串联，LangGraph 节点化 Agent；DashScope 的 LLM/Embedding 作为可替换下游，OCR 走校园网工作站自托管 DeepSeek-OCR-2；全量数据（关系+向量+索引）收敛到 SeekDB 单库；RAG 答复每条都带"文档·章节·页·bbox"引用并可跳转 PDF 预览高亮；施工方案走"项目参数结构化 + 章节级 RAG + 多 Agent 协同 + 一致性校验 + Word 模板高保真渲染"路线；在一台 16C/32G Docker 主机上稳定服务 20 人级并发，并为后续水平扩展/云化留足接口。*
