@@ -78,3 +78,59 @@ export interface AuditLogListResponse {
   page: number
   page_size: number
 }
+
+// ── Knowledge Base ─────────────────────────────────────────────────
+
+export interface KnowledgeBaseOut {
+  id: string
+  name: string
+  description: string
+  creator_id: string | null
+  is_active: boolean
+  my_role: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface KnowledgeBaseListResponse {
+  items: KnowledgeBaseOut[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface KnowledgeBaseCreateRequest {
+  name: string
+  description?: string
+}
+
+export interface KnowledgeBaseUpdateRequest {
+  name?: string
+  description?: string
+}
+
+export interface PermissionOut {
+  id: string
+  knowledge_base_id: string
+  user_id: string
+  username: string
+  display_name: string
+  role: string
+  created_at: string
+  updated_at: string
+}
+
+export interface PermissionUserOut {
+  id: string
+  username: string
+  display_name: string
+}
+
+export interface PermissionUpdateItem {
+  user_id: string
+  role: string
+}
+
+export interface PermissionUpdateRequest {
+  permissions: PermissionUpdateItem[]
+}

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  Collection,
   Key,
   Monitor,
   Setting,
@@ -26,9 +27,9 @@ const router = useRouter()
 const passwordDialogVisible = ref(false)
 
 const cards = [
-  { title: '知识库', description: '文档入库、检索与引用预览', icon: Tickets },
-  { title: 'RAG 问答', description: 'SSE 流式回答与可溯源引用', icon: Service },
-  { title: '方案编制', description: '模板、参数、章节生成工作台', icon: Monitor },
+  { title: '知识库', description: '文档入库、检索与引用预览', icon: Tickets, route: '/knowledge' },
+  { title: 'RAG 问答', description: 'SSE 流式回答与可溯源引用', icon: Service, route: '' },
+  { title: '方案编制', description: '模板、参数、章节生成工作台', icon: Monitor, route: '' },
 ]
 
 async function logout() {
@@ -47,12 +48,19 @@ async function logout() {
       <div class="account">
         <div class="identity">
           <span>{{ auth.user?.display_name }}</span>
-          <ElTag type="success" effect="dark">Stage 3</ElTag>
+          <ElTag type="success" effect="dark">Stage 4</ElTag>
         </div>
         <div class="actions">
           <ElButton :icon="UserIcon" @click="router.push('/profile')">个人中心</ElButton>
           <ElButton v-if="auth.isAdmin" :icon="Setting" @click="router.push('/admin/users')">
             用户管理
+          </ElButton>
+          <ElButton
+            v-if="auth.isAdmin"
+            :icon="Collection"
+            @click="router.push('/admin/knowledge-bases')"
+          >
+            知识库管理
           </ElButton>
           <ElButton :icon="Key" @click="passwordDialogVisible = true">改密</ElButton>
           <ElButton :icon="SwitchButton" @click="logout">登出</ElButton>
@@ -61,7 +69,13 @@ async function logout() {
     </section>
 
     <section class="grid">
-      <article v-for="card in cards" :key="card.title" class="module">
+      <article
+        v-for="card in cards"
+        :key="card.title"
+        class="module"
+        :class="{ clickable: card.route }"
+        @click="card.route ? router.push(card.route) : undefined"
+      >
         <ElIcon :size="24">
           <component :is="card.icon" />
         </ElIcon>
@@ -140,6 +154,18 @@ h1 {
   background: #fff;
   border: 1px solid #d8dee8;
   border-radius: 8px;
+}
+
+.module.clickable {
+  cursor: pointer;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.module.clickable:hover {
+  border-color: #409eff;
+  box-shadow: 0 2px 12px rgb(64 158 255 / 15%);
 }
 
 .module h2 {
