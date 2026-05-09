@@ -19,6 +19,8 @@ services:
       context: .
       dockerfile: docker/Dockerfile.api
     env_file: .env.example
+    environment:
+      RUN_ALEMBIC: "1"
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:

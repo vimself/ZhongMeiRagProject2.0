@@ -8,13 +8,19 @@ version = "0.1.0"
 description = "ZhongMei RAG backend service"
 requires-python = ">=3.11"
 dependencies = [
+  "alembic>=1.14,<2",
+  "asyncmy>=0.2,<0.3",
+  "aiosqlite>=0.20,<0.21",
   "celery[redis]>=5.4,<6",
   "fastapi>=0.115,<0.116",
   "flower>=2.0,<3",
   "loguru>=0.7,<0.8",
   "prometheus-fastapi-instrumentator>=7.0,<8",
   "pydantic-settings>=2.6,<3",
+  "python-jose[cryptography]>=3.3,<4",
   "redis>=5.2,<6",
+  "slowapi>=0.1,<0.2",
+  "sqlalchemy[asyncio]>=2.0,<3",
   "uvicorn[standard]>=0.32,<0.33",
 ]
 

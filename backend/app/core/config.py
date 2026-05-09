@@ -14,8 +14,17 @@ class Settings(BaseSettings):
     app_name: str = "zhongmei-rag"
     app_env: str = "local"
     jwt_secret: SecretStr
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_minutes: int = 30
+    jwt_refresh_token_days: int = 7
+    pdf_token_minutes: int = 5
     redis_url: str = "redis://localhost:6379/0"
     database_url: str = "mysql+asyncmy://zhongmei:zhongmei@localhost:3306/zhongmei"
+    login_failed_limit: int = 5
+    login_failed_window_seconds: int = 900
+    admin_seed_username: str = "admin"
+    admin_seed_password: SecretStr | None = None
+    admin_seed_display_name: str = "系统管理员"
     log_level: str = "INFO"
 
 

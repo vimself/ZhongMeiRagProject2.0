@@ -20,7 +20,7 @@ const huskyBin = join(
 const result = spawnSync(huskyBin, ['.husky'], {
   cwd: root,
   stdio: 'inherit',
-  shell: false,
+  shell: process.platform === 'win32',
 })
 
 process.exit(result.status ?? 1)

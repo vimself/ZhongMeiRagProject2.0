@@ -1,3 +1,5 @@
+## 用户要求
+
 总是使用中文回答我。
 禁止批量删除文件或目录。
 不要使用：
@@ -10,6 +12,11 @@
 正确示例：
 `Remove-Item "C:\path\to\file.txt"`
 如果需要批量删除文件，应停止操作，并询问用户，让用户手动删除。
+完成任务后，你需要检查更新docs文件夹下的md文件，以及按情况去更新AGENTS.md文件内容。
+
+## github远程仓库地址
+
+origin=https://github.com/vimself/ZhongMeiRagProject2.0.git
 
 ## 工程约定
 
@@ -17,3 +24,10 @@
 - 后端目标运行时为 Python 3.11 + FastAPI + Celery。
 - 前端目标运行时为 Vue 3 + TypeScript + Vite。
 - 基础设施通过 Docker Compose 启动，配置文件集中放在 `ops/` 和 `docker/`。
+
+## 当前实现状态
+
+- Stage 1 基础设施与工程骨架已完成，进度记录见 `docs/stage-1-infrastructure-progress.md`。
+- Stage 2 数据层与认证内核已完成，进度记录见 `docs/stage-2-data-auth-progress.md`。
+- 后端认证入口统一位于 `/api/v2/auth/*`，包含登录、刷新、登出、改密与当前用户查询。
+- 首次部署创建管理员账号时，在迁移完成后运行 `python -m app.cli.seed_admin`，并确保 `ADMIN_SEED_PASSWORD` 已配置为非示例值。

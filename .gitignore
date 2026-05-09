@@ -15,6 +15,9 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+.vite/
+playwright-report/
+test-results/
 
 # Environment
 .env
@@ -34,3 +37,9 @@ logs/
 tmp/
 *.log
 .cache/
+
+# Local database / compose overrides
+*.db
+*.sqlite
+*.sqlite3
+docker-compose.override.yml
