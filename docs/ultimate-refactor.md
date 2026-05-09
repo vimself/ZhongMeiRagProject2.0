@@ -746,7 +746,7 @@ backend/
 
 **整体目标**：知识库 CRUD + 权限矩阵（不含入库）。
 
-#### 4.1 模型与路由（2 天）
+#### 4.1 模型与路由（2 天） - 最新要求：抛弃旧版本的数据库表设计和所有数据，全部按按照系统架构重新设计，并创建新的数据进行测试
 - 迁移：`knowledge_bases / knowledge_base_permissions`。
 - `/v2/knowledge-bases` CRUD；`/v2/knowledge-bases/{id}/permissions` 角色矩阵（owner/editor/viewer）。
 - **验收**：权限边界单元测试全过。
@@ -762,7 +762,7 @@ backend/
 
 **整体目标**：PDF 上传 → DeepSeek-OCR → 章节切片 → 向量 + 结构化索引落 SeekDB。
 
-#### 5.1 数据模型 + DashScope 客户端（2 天）
+#### 5.1 数据模型 + DashScope 客户端（2 天）- 最新要求：抛弃旧版本的数据库表设计和所有数据，全部按按照系统架构重新设计，并创建新的数据进行测试
 - 迁移：`documents / document_parse_results / document_assets / document_ingest_jobs / ingest_step_receipts / ingest_callback_receipts / knowledge_chunks_v2 / knowledge_page_index_v2`（含 `section_path/section_id/page_start/page_end/bbox/doc_kind/scheme_type`）。
 - `services/llm/client.py` 统一 DashScope：chat / embedding / ocr，带 tenacity + token bucket + 成本统计。
 - **验收**：单元测试模拟 429 重试成功。
