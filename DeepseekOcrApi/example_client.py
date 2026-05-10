@@ -1,186 +1,99 @@
-import requests
-import time
+from __future__ import annotations
+
 import os
+import time
+from pathlib import Path
+from typing import Any
+
+import requests
 
 
 class DeepSeekOCRClient:
-    def __init__(self, base_url="http://localhost:8899"):
-        self.base_url = base_url
-    
-    def upload_pdf(self, pdf_path):
-        """
-        上传 PDF 文件
-        """
-        if not os.path.exists(pdf_path):
+    def __init__(self, base_url: str = "http://localhost:8899", api_token: str | None = None) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_token = api_token or os.getenv("API_TOKEN", "")
+
+    @property
+    def headers(self) -> dict[str, str]:
+        if not self.api_token:
+            return {}
+        return {"Authorization": f"Bearer {self.api_token}"}
+
+    def upload_pdf(self, pdf_path: str, *, priority: int = 5) -> str:
+        path = Path(pdf_path)
+        if not path.exists():
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
-        
-        url = f"{self.base_url}/upload"
-        with open(pdf_path, "rb") as f:
-            files = {"file": f}
-            response = requests.post(url, files=files)
-        
-        if response.status_code != 200:
-            raise Exception(f"Upload failed: {response.text}")
-        
-        result = response.json()
-        print(f"PDF uploaded successfully. Session ID: {result['session_id']}")
-        return result["session_id"]
-    
-    def get_status(self, session_id):
-        """
-        查询处理状态
-        """
-        url = f"{self.base_url}/status/{session_id}"
-        response = requests.get(url)
-        
-        if response.status_code != 200:
-            raise Exception(f"Failed to get status: {response.text}")
-        
-        return response.json()
-    
-    def wait_for_completion(self, session_id, check_interval=5, timeout=3600):
-        """
-        等待处理完成
-        """
-        print(f"Waiting for processing to complete...")
-        start_time = time.time()
-        
+        with path.open("rb") as file_obj:
+            response = requests.post(
+                f"{self.base_url}/upload",
+                headers=self.headers,
+                files={"file": (path.name, file_obj, "application/pdf")},
+                data={"priority": str(priority)},
+                timeout=120,
+            )
+        response.raise_for_status()
+        session_id = response.json()["session_id"]
+        print(f"PDF 已上传，Session ID: {session_id}")
+        return str(session_id)
+
+    def get_status(self, session_id: str) -> dict[str, Any]:
+        response = requests.get(f"{self.base_url}/status/{session_id}", timeout=30)
+        response.raise_for_status()
+        return dict(response.json())
+
+    def wait_for_completion(self, session_id: str, check_interval: int = 5, timeout: int = 3600) -> bool:
+        started_at = time.time()
         while True:
             status_data = self.get_status(session_id)
-            status = status_data["status"]
-            print(f"Status: {status}")
-            
-            if status == "completed":
-                print("Processing completed successfully!")
+            print(
+                f"状态: {status_data.get('status')}，阶段: {status_data.get('stage')}，"
+                f"进度: {status_data.get('progress')}%"
+            )
+            if status_data.get("status") == "completed":
                 return True
-            elif status.startswith("failed"):
-                print(f"Processing failed: {status}")
+            if status_data.get("status") == "failed":
+                print(status_data.get("error_message"))
                 return False
-            
-            elapsed = time.time() - start_time
-            if elapsed > timeout:
-                print(f"Timeout after {timeout} seconds")
+            if time.time() - started_at > timeout:
                 return False
-            
             time.sleep(check_interval)
-    
-    def download_result(self, session_id, output_path="results.zip"):
-        """
-        下载完整结果（ZIP）
-        """
-        url = f"{self.base_url}/result/{session_id}"
-        response = requests.get(url)
-        
-        if response.status_code != 200:
-            raise Exception(f"Failed to download result: {response.text}")
-        
-        with open(output_path, "wb") as f:
-            f.write(response.content)
-        
-        print(f"Results downloaded to: {output_path}")
-        return output_path
-    
-    def get_markdown(self, session_id):
-        """
-        获取 Markdown 内容
-        """
-        url = f"{self.base_url}/result/{session_id}/markdown"
-        response = requests.get(url)
-        
-        if response.status_code != 200:
-            raise Exception(f"Failed to get markdown: {response.text}")
-        
-        return response.json()["markdown"]
-    
-    def download_images(self, session_id, output_path="images.zip"):
-        """
-        下载所有图片
-        """
-        url = f"{self.base_url}/result/{session_id}/images"
-        response = requests.get(url)
-        
-        if response.status_code != 200:
-            raise Exception(f"Failed to download images: {response.text}")
-        
-        with open(output_path, "wb") as f:
-            f.write(response.content)
-        
-        print(f"Images downloaded to: {output_path}")
-        return output_path
-    
-    def download_single_image(self, session_id, image_name, output_path):
-        """
-        下载单张图片
-        """
-        url = f"{self.base_url}/result/{session_id}/image/{image_name}"
-        response = requests.get(url)
-        
-        if response.status_code != 200:
-            raise Exception(f"Failed to download image: {response.text}")
-        
-        with open(output_path, "wb") as f:
-            f.write(response.content)
-        
-        print(f"Image downloaded to: {output_path}")
-        return output_path
-    
-    def delete_session(self, session_id):
-        """
-        删除会话
-        """
-        url = f"{self.base_url}/session/{session_id}"
-        response = requests.delete(url)
-        
-        if response.status_code != 200:
-            raise Exception(f"Failed to delete session: {response.text}")
-        
-        print(f"Session {session_id} deleted successfully")
+
+    def get_markdown(self, session_id: str, include_meta: bool = False) -> dict[str, Any]:
+        response = requests.get(
+            f"{self.base_url}/result/{session_id}/markdown",
+            params={"include_meta": "true"} if include_meta else None,
+            timeout=60,
+        )
+        response.raise_for_status()
+        return dict(response.json())
+
+    def get_assets(self, session_id: str) -> dict[str, Any]:
+        response = requests.get(f"{self.base_url}/result/{session_id}/assets", timeout=120)
+        response.raise_for_status()
+        return dict(response.json())
+
+    def delete_session(self, session_id: str) -> bool:
+        response = requests.delete(
+            f"{self.base_url}/session/{session_id}",
+            headers=self.headers,
+            timeout=30,
+        )
+        response.raise_for_status()
         return True
-    
-    def process_pdf(self, pdf_path, output_dir=None):
-        """
-        完整流程：上传 -> 等待 -> 下载结果
-        """
+
+    def process_pdf(self, pdf_path: str) -> dict[str, Any]:
         session_id = self.upload_pdf(pdf_path)
-        
-        if self.wait_for_completion(session_id):
-            results = {
-                "session_id": session_id,
-                "markdown": self.get_markdown(session_id)
-            }
-            
-            if output_dir:
-                os.makedirs(output_dir, exist_ok=True)
-                
-                result_zip = os.path.join(output_dir, "results.zip")
-                self.download_result(session_id, result_zip)
-                
-                images_zip = os.path.join(output_dir, "images.zip")
-                self.download_images(session_id, images_zip)
-                
-                md_path = os.path.join(output_dir, "result.md")
-                with open(md_path, "w", encoding="utf-8") as f:
-                    f.write(results["markdown"])
-                
-                print(f"All results saved to: {output_dir}")
-            
-            return results
-        else:
-            raise Exception("Processing failed or timed out")
+        if not self.wait_for_completion(session_id):
+            raise RuntimeError("OCR 处理失败或超时")
+        return {
+            "session_id": session_id,
+            "markdown": self.get_markdown(session_id, include_meta=True),
+            "assets": self.get_assets(session_id),
+        }
 
 
 if __name__ == "__main__":
-    client = DeepSeekOCRClient("http://localhost:8000")
-    
-    # 示例使用
-    pdf_file = "test.pdf"
-    
-    try:
-        # 上传并处理 PDF
-        result = client.process_pdf(pdf_file, output_dir="output")
-        
-        print("\n=== Markdown Content ===")
-        print(result["markdown"][:500] + "..." if len(result["markdown"]) > 500 else result["markdown"])
-        
-    except Exception as e:
-        print(f"Error: {e}")
+    client = DeepSeekOCRClient("http://localhost:8899")
+    result = client.process_pdf("test.pdf")
+    markdown = result["markdown"]["markdown"]
+    print(markdown[:500] + "..." if len(markdown) > 500 else markdown)

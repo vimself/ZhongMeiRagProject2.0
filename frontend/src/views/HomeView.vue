@@ -48,7 +48,7 @@ async function logout() {
       <div class="account">
         <div class="identity">
           <span>{{ auth.user?.display_name }}</span>
-          <ElTag type="success" effect="dark">Stage 4</ElTag>
+          <ElTag type="success" effect="dark">Stage 5</ElTag>
         </div>
         <div class="actions">
           <ElButton :icon="UserIcon" @click="router.push('/profile')">个人中心</ElButton>

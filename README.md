@@ -39,6 +39,7 @@ docker compose up --build
 
 - **工作站地址**：`222.195.4.65:8899`
 - **连接方式**：校园网 VPN 或 SSH 反向隧道（`ssh -R`）
+    ssh -N -T -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 127.0.0.1:18000:127.0.0.1:8000 ubuntu@222.195.4.65
 - **服务代码**：`DeepseekOcrApi/` 目录
 - **API 协议**：异步模式（`POST /upload` → 轮询 `GET /status/{id}` → `GET /result/{id}/markdown`）
 

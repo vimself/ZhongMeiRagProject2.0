@@ -13,6 +13,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from app.api.admin import router as admin_router
 from app.api.auth import api_limiter
 from app.api.auth import router as auth_router
+from app.api.documents import router as documents_router
 from app.api.health import router as health_router
 from app.api.knowledge_base import admin_router as kb_admin_router
 from app.api.knowledge_base import router as kb_router
@@ -41,6 +42,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_router)
     app.include_router(kb_router)
     app.include_router(kb_admin_router)
+    app.include_router(documents_router)
     app.include_router(health_router)
 
     uploads_dir = Path("uploads")

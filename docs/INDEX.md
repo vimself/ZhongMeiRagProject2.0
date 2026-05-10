@@ -7,3 +7,4 @@
 | [stage-2-data-auth-progress.md](stage-2-data-auth-progress.md) | Stage 2 · 数据层与认证内核 进度报告 |
 | [stage-3-user-admin-progress.md](stage-3-user-admin-progress.md) | Stage 3 · 用户与后台管理 进度报告 |
 | [stage-4-knowledge-base-progress.md](stage-4-knowledge-base-progress.md) | Stage 4 · 知识库骨架 进度报告 |
+| [stage-5-ingest-progress.md](stage-5-ingest-progress.md) | Stage 5 · 入库链路核心 进度报告 |

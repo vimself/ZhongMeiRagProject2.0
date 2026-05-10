@@ -26,6 +26,21 @@ class Settings(BaseSettings):
     admin_seed_password: SecretStr | None = None
     admin_seed_display_name: str = "系统管理员"
     log_level: str = "INFO"
+    dashscope_api_key: SecretStr | None = None
+    dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    dashscope_chat_model: str = "qwen3.6-plus"
+    dashscope_embedding_model: str = "qwen3-vl-embedding"
+    ocr_base_url: str = "http://222.195.4.65:8899"
+    ocr_workstation_host: str = "222.195.4.65"
+    ocr_callback_base_url: str = "http://127.0.0.1:18000"
+    ocr_callback_token: SecretStr | None = None
+    ocr_poll_interval_seconds: float = 5.0
+    ocr_max_poll_minutes: int = 60
+    upload_dir: str = "uploads/documents"
+    upload_max_mb: int = 200
+    embed_batch_size: int = 25
+    chunk_tokens: int = 512
+    chunk_overlap: int = 64
 
 
 @lru_cache

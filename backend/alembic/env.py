@@ -11,6 +11,7 @@ from alembic import context
 from app.core.config import get_settings
 from app.db.base import Base
 from app.models import auth as _auth_models  # noqa: F401
+from app.models import document as _document_models  # noqa: F401
 from app.models import knowledge_base as _kb_models  # noqa: F401
 
 config = context.config

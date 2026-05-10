@@ -1,198 +1,88 @@
 # DeepSeek OCR API 服务
 
-基于 DeepSeek-OCR-2 的 PDF 识别 API 服务，支持多任务并发处理。
+这是 ZhongMei RAG v2.0 使用的自托管 DeepSeek-OCR-2 服务端。服务采用单例 vLLM、内部异步队列和持久化 `meta.json` 会话状态。Windows 本机开启校园网 VPN 后直接访问工作站 `http://222.195.4.65:8899`；工作站回调 Windows 本机通过 SSH 反向隧道访问 `http://127.0.0.1:18000`。
 
-## 功能特性
-
-- 上传 PDF 文件进行 OCR 识别
-- 返回 Markdown 格式的识别结果
-- 提取 PDF 中的图片内容
-- 支持多任务并发处理
-- 提供 RESTful API 接口
-
-## 安装依赖
+## 启动
 
 ```bash
 pip install -r requirements.txt
-```
-
-## 启动服务
-
-```bash
 bash start.sh
 ```
 
-或者直接运行：
+关键环境变量：
 
-```bash
-python3 -m uvicorn app:app --host 0.0.0.0 --port 8899 --workers 1
-```
+- `API_HOST` / `API_PORT`：默认 `0.0.0.0:8899`
+- `API_TOKEN`：设置后，`POST /upload` 与 `DELETE /session/{sid}` 必须带 `Authorization: Bearer <token>`
+- `DEFAULT_CALLBACK_URL`：默认 `http://127.0.0.1:18000/api/v2/ocr/callback`，用于工作站侧通过反向隧道回调 Windows 后端
+- `OCR_CALLBACK_TOKEN`：回调时写入 `Authorization: Bearer <token>`，需与后端 `OCR_CALLBACK_TOKEN` 一致
+- `CORS_ALLOW_ORIGINS`：逗号分隔白名单，默认 `*`
+- `QUEUE_SIZE`：默认 `16`
+- `MAX_FILE_SIZE`：默认 `200MB`
+- `GENERATE_TIMEOUT_SECONDS`：默认 `50min`
+- `TEMP_DIR`：默认 `/tmp/deepseek_ocr_uploads`
 
-## API 接口
+## API
 
-### 1. 上传 PDF
+### 健康检查
 
-**接口**: `POST /upload`
+- `GET /healthz`：进程存活
+- `GET /readyz`：模型加载和 GPU 可用性
+- `GET /queue`：队列长度与活跃任务数
 
-**参数**:
-- `file`: PDF 文件 (multipart/form-data)
+### 上传
 
-**返回**:
+`POST /upload`
+
+表单字段：
+
+- `file`：PDF 文件
+- `priority`：整数，默认 `5`
+- `callback_url`：可选；未传时使用 `DEFAULT_CALLBACK_URL`，处理完成或失败后 POST 回调
+
+返回：
+
 ```json
 {
   "session_id": "uuid",
-  "status": "processing",
-  "message": "PDF uploaded successfully. Processing started."
+  "status": "queued",
+  "message": "PDF uploaded successfully. Processing queued."
 }
 ```
 
-### 2. 查询处理状态
+### 状态
 
-**接口**: `GET /status/{session_id}`
+`GET /status/{session_id}`
 
-**返回**:
+返回包含 `status`、`progress`、`stage`、`started_at`、`updated_at`、`elapsed_ms`、结构化错误字段，并保留 `is_completed` / `is_failed` 兼容字段。
+
+### 结果
+
+- `GET /result/{session_id}/markdown`
+- `GET /result/{session_id}/markdown?include_meta=true`
+- `GET /result/{session_id}/assets`
+- `GET /result/{session_id}/images/base64`
+- `GET /result/{session_id}/images/list`
+- `GET /result/{session_id}/image/{image_name}`
+- `GET /result/{session_id}`：完整 ZIP
+
+`include_meta=true` 时 markdown 接口返回：
+
 ```json
 {
   "session_id": "uuid",
-  "status": "completed",
-  "is_completed": true,
-  "is_failed": false
+  "markdown": "# 文档内容",
+  "page_count": 12,
+  "outline": [{"level": 1, "title": "第一章 总则"}],
+  "processed_at": "2026-05-09T00:00:00+00:00"
 }
 ```
 
-状态值：
-- `processing`: 处理中
-- `completed`: 完成
-- `failed`: 失败
+### 删除会话
 
-### 3. 下载完整结果
+`DELETE /session/{session_id}`
 
-**接口**: `GET /result/{session_id}`
+设置 `API_TOKEN` 后需要鉴权。服务端只删除一个明确 session 目录，并校验目录位于 `TEMP_DIR` 下。
 
-**返回**: ZIP 文件，包含：
-- `result.md`: Markdown 结果
-- `result_det.md`: 带检测标记的 Markdown
-- `result_layout.pdf`: 带布局标注的 PDF
-- `images/`: 提取的图片文件夹
+## 运行模型
 
-### 4. 获取 Markdown 内容
-
-**接口**: `GET /result/{session_id}/markdown`
-
-**返回**:
-```json
-{
-  "session_id": "uuid",
-  "markdown": "# 文档内容..."
-}
-```
-
-### 5. 下载所有图片
-
-**接口**: `GET /result/{session_id}/images`
-
-**返回**: ZIP 文件，包含所有提取的图片
-
-### 6. 下载单张图片
-
-**接口**: `GET /result/{session_id}/image/{image_name}`
-
-**返回**: 图片文件
-
-### 7. 删除会话
-
-**接口**: `DELETE /session/{session_id}`
-
-**返回**:
-```json
-{
-  "session_id": "uuid",
-  "message": "Session deleted successfully."
-}
-```
-
-## 使用示例
-
-### Python 示例
-
-```python
-import requests
-import time
-
-# 上传 PDF
-url = "http://localhost:8000/upload"
-with open("test.pdf", "rb") as f:
-    response = requests.post(url, files={"file": f})
-    session_id = response.json()["session_id"]
-    print(f"Session ID: {session_id}")
-
-# 轮询查询状态
-status_url = f"http://localhost:8000/status/{session_id}"
-while True:
-    response = requests.get(status_url)
-    status = response.json()["status"]
-    print(f"Status: {status}")
-    
-    if status == "completed":
-        break
-    elif status.startswith("failed"):
-        print(f"Processing failed: {status}")
-        break
-    
-    time.sleep(5)
-
-# 下载结果
-result_url = f"http://localhost:8000/result/{session_id}"
-response = requests.get(result_url)
-with open("results.zip", "wb") as f:
-    f.write(response.content)
-
-# 获取 Markdown 内容
-markdown_url = f"http://localhost:8000/result/{session_id}/markdown"
-response = requests.get(markdown_url)
-markdown = response.json()["markdown"]
-print(markdown)
-```
-
-### cURL 示例
-
-```bash
-# 上传 PDF
-curl -X POST -F "file=@test.pdf" http://localhost:8000/upload
-
-# 查询状态
-curl http://localhost:8000/status/{session_id}
-
-# 下载结果
-curl -O http://localhost:8000/result/{session_id}
-
-# 获取 Markdown
-curl http://localhost:8000/result/{session_id}/markdown
-
-# 下载所有图片
-curl -O http://localhost:8000/result/{session_id}/images
-
-# 删除会话
-curl -X DELETE http://localhost:8000/session/{session_id}
-```
-
-## 配置说明
-
-在 `config.py` 中可以修改以下配置：
-
-- `MODEL_PATH`: 模型路径
-- `MAX_CONCURRENCY`: 最大并发数
-- `NUM_WORKERS`: 图片预处理工作线程数
-- `API_HOST`: API 服务监听地址
-- `API_PORT`: API 服务端口
-- `API_WORKERS`: API 工作进程数
-- `TEMP_DIR`: 临时文件存储目录
-- `MAX_FILE_SIZE`: 最大文件大小（字节）
-
-## 注意事项
-
-1. 首次启动会加载模型，需要较长时间
-2. 确保模型路径正确，模型文件完整
-3. 临时文件存储在 `/tmp/deepseek_ocr_uploads/` 目录
-4. 建议定期清理临时文件以释放磁盘空间
-5. 处理大文件时请确保有足够的内存和磁盘空间
+`PDFOCRProcessor` 保持单例 vLLM。`/upload` 只入队并立即返回，后台 worker 串行调用模型，避免高并发将 GPU 拉满。`meta.json` 会持久化上传时间、文件名、状态、阶段、进度、耗时、错误和资产元数据。后台清理协程每 30 分钟清理超过 24 小时未更新的 session。

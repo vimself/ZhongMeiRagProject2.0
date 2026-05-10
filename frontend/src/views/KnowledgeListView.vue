@@ -312,7 +312,13 @@ onMounted(loadKBs)
 
     <!-- Knowledge Base Table -->
     <ElCard class="table-card" shadow="never">
-      <ElTable v-loading="loading" :data="kbs" stripe style="width: 100%">
+      <ElTable
+        v-loading="loading"
+        :data="kbs"
+        stripe
+        style="width: 100%"
+        @row-click="(row: KnowledgeBaseOut) => router.push(`/knowledge/${row.id}/documents`)"
+      >
         <ElTableColumn prop="name" label="知识库名称" min-width="180" />
         <ElTableColumn prop="description" label="描述" min-width="240">
           <template #default="{ row }: { row: KnowledgeBaseOut }">
@@ -341,7 +347,7 @@ onMounted(loadKBs)
                 :icon="Edit"
                 text
                 size="small"
-                @click="openEditDialog(row)"
+                @click.stop="openEditDialog(row)"
               >
                 编辑
               </ElButton>
@@ -350,7 +356,7 @@ onMounted(loadKBs)
                 :icon="Setting"
                 text
                 size="small"
-                @click="openPermDrawer(row)"
+                @click.stop="openPermDrawer(row)"
               >
                 权限
               </ElButton>
@@ -360,7 +366,7 @@ onMounted(loadKBs)
                 text
                 size="small"
                 type="danger"
-                @click="handleDisable(row)"
+                @click.stop="handleDisable(row)"
               >
                 停用
               </ElButton>

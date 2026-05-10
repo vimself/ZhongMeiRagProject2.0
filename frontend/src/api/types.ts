@@ -134,3 +134,59 @@ export interface PermissionUpdateItem {
 export interface PermissionUpdateRequest {
   permissions: PermissionUpdateItem[]
 }
+
+// ── Documents / Ingest ──────────────────────────────────────────────
+
+export interface DocumentOut {
+  id: string
+  knowledge_base_id: string
+  uploader_id: string
+  uploader_name: string
+  title: string
+  filename: string
+  mime: string
+  size_bytes: number
+  sha256: string
+  doc_kind: string
+  scheme_type: string | null
+  is_standard_clause: boolean
+  status: string
+  page_count: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface DocumentListResponse {
+  items: DocumentOut[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface DocumentUploadResponse {
+  document_id: string
+  job_id: string
+  trace_id: string
+}
+
+export interface IngestStepProgress {
+  step: string
+  status: string
+  created_at: string | null
+}
+
+export interface IngestJobProgress {
+  document_id: string
+  job_id: string | null
+  job_status: string | null
+  document_status: string
+  progress: number
+  steps: IngestStepProgress[]
+  last_error: string | null
+}
+
+export interface DocumentDetailResponse extends DocumentOut {
+  latest_job: Record<string, unknown> | null
+  parse_result: Record<string, unknown> | null
+  assets: Array<Record<string, unknown>>
+}

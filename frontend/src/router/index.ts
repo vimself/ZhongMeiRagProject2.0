@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
+import { getKnowledgeBase } from '@/api/knowledge'
 import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
@@ -34,6 +35,20 @@ const router = createRouter({
       name: 'knowledge',
       component: () => import('@/views/KnowledgeListView.vue'),
       meta: { requiresAuth: true },
+    },
+    {
+      path: '/knowledge/:kbId/documents',
+      name: 'knowledge-documents',
+      component: () => import('@/views/KnowledgeDocumentsView.vue'),
+      meta: { requiresAuth: true },
+      beforeEnter: async (to) => {
+        try {
+          await getKnowledgeBase(String(to.params.kbId))
+          return true
+        } catch {
+          return { name: 'knowledge' }
+        }
+      },
     },
     {
       path: '/admin/knowledge-bases',

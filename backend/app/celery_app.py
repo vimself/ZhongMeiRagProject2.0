@@ -24,6 +24,11 @@ celery_app.conf.update(
         "plan.*": {"queue": "plan"},
         "docx.*": {"queue": "docx"},
     },
+    imports=("app.tasks.ingest",),
+    task_annotations={
+        "ingest.embed_batch": {"rate_limit": "10/s"},
+        "ingest.process": {"rate_limit": None},
+    },
     timezone="Asia/Shanghai",
 )
 

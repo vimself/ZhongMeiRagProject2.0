@@ -1,11 +1,29 @@
 from app.models.auth import AuditLog, AuthLoginAttempt, LoginRecord, User
+from app.models.document import (
+    Document,
+    DocumentAsset,
+    DocumentIngestJob,
+    DocumentParseResult,
+    IngestCallbackReceipt,
+    IngestStepReceipt,
+    KnowledgeChunkV2,
+    KnowledgePageIndexV2,
+)
 from app.models.knowledge_base import KnowledgeBase, KnowledgeBasePermission
 
 __all__ = [
     "AuditLog",
     "AuthLoginAttempt",
+    "Document",
+    "DocumentAsset",
+    "DocumentIngestJob",
+    "DocumentParseResult",
+    "IngestCallbackReceipt",
+    "IngestStepReceipt",
     "KnowledgeBase",
     "KnowledgeBasePermission",
+    "KnowledgeChunkV2",
+    "KnowledgePageIndexV2",
     "LoginRecord",
     "User",
 ]

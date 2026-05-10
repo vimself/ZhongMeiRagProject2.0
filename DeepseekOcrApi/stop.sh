@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 echo "Stopping service on port 8899..."
 

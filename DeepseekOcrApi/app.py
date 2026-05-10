@@ -1,51 +1,80 @@
-import os
-import uuid
+from __future__ import annotations
+
 import asyncio
-import zipfile
 import base64
-from typing import Optional, List
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from concurrent.futures import ThreadPoolExecutor
+import json
+import os
 import shutil
+import time
+import traceback
+import uuid
+import zipfile
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import torch
+import requests
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from config import (
-    TEMP_DIR, MAX_FILE_SIZE, ALLOWED_EXTENSIONS, 
-    API_HOST, API_PORT, API_WORKERS
+    API_HOST,
+    API_PORT,
+    API_TOKEN,
+    CLEANUP_INTERVAL_SECONDS,
+    CALLBACK_TIMEOUT_SECONDS,
+    CORS_ALLOW_ORIGINS,
+    DEFAULT_CALLBACK_URL,
+    GENERATE_TIMEOUT_SECONDS,
+    MAX_FILE_SIZE,
+    OCR_CALLBACK_TOKEN,
+    QUEUE_SIZE,
+    SESSION_TTL_SECONDS,
+    TEMP_DIR,
 )
 from ocr_processor import PDFOCRProcessor
 
-app = FastAPI(title="DeepSeek OCR API", version="1.0.0")
-
+app = FastAPI(title="DeepSeek OCR API", version="1.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOW_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-os.makedirs(TEMP_DIR, exist_ok=True)
-
+Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
 processor = PDFOCRProcessor()
+task_queue: asyncio.PriorityQueue[tuple[int, float, str]] = asyncio.PriorityQueue(maxsize=QUEUE_SIZE)
+active_sessions: set[str] = set()
+worker_task: asyncio.Task[None] | None = None
+cleanup_task: asyncio.Task[None] | None = None
 
-executor = ThreadPoolExecutor(max_workers=API_WORKERS)
+
+class ErrorResponse(BaseModel):
+    code: str
+    message: str
+    detail: Any = None
 
 
 class ImageInfo(BaseModel):
     name: str
-    url: str
+    url: str | None = None
     size: int
-    width: Optional[int] = None
-    height: Optional[int] = None
+    width: int | None = None
+    height: int | None = None
 
 
 class ImageListResponse(BaseModel):
     session_id: str
     total: int
-    images: List[ImageInfo]
+    images: list[ImageInfo]
 
 
 class ImageDataResponse(BaseModel):
@@ -53,357 +82,515 @@ class ImageDataResponse(BaseModel):
     base64: str
     mime_type: str
     size: int
+    page_no: int | None = None
+    bbox: dict[str, float] | None = None
 
 
 class ImagesDataResponse(BaseModel):
     session_id: str
     total: int
-    images: List[ImageDataResponse]
+    images: list[ImageDataResponse]
 
 
-def cleanup_temp_files(session_id: str):
-    session_dir = os.path.join(TEMP_DIR, session_id)
-    if os.path.exists(session_dir):
-        shutil.rmtree(session_dir)
+@dataclass
+class SessionMeta:
+    session_id: str
+    filename: str
+    status: str = "queued"
+    stage: str = "queued"
+    progress: int = 0
+    priority: int = 5
+    callback_url: str | None = None
+    uploaded_at: str = field(default_factory=lambda: _now_iso())
+    started_at: str | None = None
+    updated_at: str = field(default_factory=lambda: _now_iso())
+    processed_at: str | None = None
+    elapsed_ms: int = 0
+    page_count: int | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    traceback_tail: str | None = None
+    assets: list[dict[str, Any]] = field(default_factory=list)
 
 
-def validate_file(file: UploadFile) -> bool:
-    if not file.filename:
-        return False
-    
-    file_ext = file.filename.lower().split('.')[-1]
-    if file_ext not in ALLOWED_EXTENSIONS:
-        return False
-    
-    return True
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
 
 
-async def process_pdf_task(session_id: str, pdf_path: str, output_dir: str):
-    try:
-        result = processor.process_pdf(pdf_path, output_dir)
-        
-        status_file = os.path.join(output_dir, 'status.txt')
-        with open(status_file, 'w', encoding='utf-8') as f:
-            f.write('completed')
-        
-        return result
-    except Exception as e:
-        status_file = os.path.join(output_dir, 'status.txt')
-        with open(status_file, 'w', encoding='utf-8') as f:
-            f.write(f'failed: {str(e)}')
-        raise e
+def _session_dir(session_id: str) -> Path:
+    return Path(TEMP_DIR) / session_id
+
+
+def _output_dir(session_id: str) -> Path:
+    return _session_dir(session_id) / "output"
+
+
+def _meta_path(session_id: str) -> Path:
+    return _session_dir(session_id) / "meta.json"
+
+
+def _status_path(session_id: str) -> Path:
+    return _output_dir(session_id) / "status.txt"
+
+
+def _write_meta(meta: SessionMeta) -> None:
+    meta.updated_at = _now_iso()
+    path = _meta_path(meta.session_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(asdict(meta), ensure_ascii=False, indent=2), encoding="utf-8")
+    _output_dir(meta.session_id).mkdir(parents=True, exist_ok=True)
+    _status_path(meta.session_id).write_text(_legacy_status(meta.status), encoding="utf-8")
+
+
+def _read_meta(session_id: str) -> SessionMeta:
+    path = _meta_path(session_id)
+    if path.exists():
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return SessionMeta(**data)
+    status_file = _status_path(session_id)
+    if status_file.exists():
+        status_text = status_file.read_text(encoding="utf-8").strip()
+        status = "completed" if status_text == "completed" else "failed" if status_text.startswith("failed") else status_text
+        meta = SessionMeta(session_id=session_id, filename="", status=status)
+        if status_text.startswith("failed"):
+            meta.error_message = status_text
+        return meta
+    raise HTTPException(status_code=404, detail="Session not found.")
+
+
+def _legacy_status(status_value: str) -> str:
+    if status_value == "failed":
+        return "failed"
+    if status_value == "completed":
+        return "completed"
+    return "processing" if status_value == "running" else status_value
+
+
+def require_write_token(authorization: str | None = Header(default=None)) -> None:
+    if not API_TOKEN:
+        return
+    expected = f"Bearer {API_TOKEN}"
+    if authorization != expected:
+        raise HTTPException(status_code=401, detail="Invalid API token.")
+
+
+@app.exception_handler(HTTPException)
+async def structured_http_exception(request: Request, exc: HTTPException) -> JSONResponse:
+    if isinstance(exc.detail, dict) and {"code", "message"} <= set(exc.detail):
+        return await http_exception_handler(request, exc)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=ErrorResponse(
+            code=f"http_{exc.status_code}",
+            message=str(exc.detail),
+            detail=None,
+        ).model_dump(),
+        headers=exc.headers,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception(_: Request, exc: RequestValidationError) -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content=ErrorResponse(
+            code="validation_error",
+            message="请求参数不正确",
+            detail=exc.errors(),
+        ).model_dump(),
+    )
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    global worker_task, cleanup_task
+    worker_task = asyncio.create_task(_worker_loop())
+    cleanup_task = asyncio.create_task(_cleanup_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    for task in (worker_task, cleanup_task):
+        if task is not None:
+            task.cancel()
 
 
 @app.get("/")
-async def root():
+async def root() -> dict[str, Any]:
     return {
         "message": "DeepSeek OCR API",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "endpoints": {
             "/upload": "POST - Upload PDF for OCR processing",
+            "/queue": "GET - Queue status",
+            "/healthz": "GET - Process health",
+            "/readyz": "GET - Model/GPU readiness",
             "/status/{session_id}": "GET - Check processing status",
-            "/result/{session_id}": "GET - Download all results as zip",
             "/result/{session_id}/markdown": "GET - Get markdown content",
-            "/result/{session_id}/images": "GET - Download all images as zip",
-            "/result/{session_id}/images/list": "GET - Get image list with URLs (recommended)",
-            "/result/{session_id}/images/base64": "GET - Get all images as base64 JSON",
-            "/result/{session_id}/image/{image_name}": "GET - Download single image"
-        }
+            "/result/{session_id}/assets": "GET - Get extracted assets",
+            "/result/{session_id}/images/base64": "GET - Backward compatible images endpoint",
+            "/session/{session_id}": "DELETE - Delete session",
+        },
     }
 
 
-@app.post("/upload")
-async def upload_pdf(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    if not validate_file(file):
-        raise HTTPException(status_code=400, detail="Invalid file. Only PDF files are allowed.")
-    
+@app.get("/healthz")
+async def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+async def readyz() -> dict[str, Any]:
+    return {
+        "status": "ready",
+        "model_loaded": processor is not None,
+        "cuda_available": torch.cuda.is_available(),
+    }
+
+
+@app.get("/queue")
+async def queue_status() -> dict[str, int]:
+    return {"queued": task_queue.qsize(), "active": len(active_sessions), "capacity": QUEUE_SIZE}
+
+
+@app.post("/upload", dependencies=[Depends(require_write_token)])
+async def upload_pdf(
+    file: UploadFile = File(...),
+    priority: int = Form(default=5),
+    callback_url: str | None = Form(default=None),
+) -> dict[str, Any]:
     content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail=f"File size exceeds {MAX_FILE_SIZE / (1024*1024):.0f}MB limit.")
-    
+    _validate_pdf(file, content)
     session_id = str(uuid.uuid4())
-    session_dir = os.path.join(TEMP_DIR, session_id)
-    os.makedirs(session_dir, exist_ok=True)
-    
-    pdf_path = os.path.join(session_dir, file.filename)
-    with open(pdf_path, 'wb') as f:
-        f.write(content)
-    
-    output_dir = os.path.join(session_dir, 'output')
-    os.makedirs(output_dir, exist_ok=True)
-    
-    status_file = os.path.join(output_dir, 'status.txt')
-    with open(status_file, 'w', encoding='utf-8') as f:
-        f.write('processing')
-    
-    background_tasks.add_task(process_pdf_task, session_id, pdf_path, output_dir)
-    
+    session_dir = _session_dir(session_id)
+    output_dir = _output_dir(session_id)
+    session_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filename = Path(file.filename or "document.pdf").name
+    pdf_path = session_dir / filename
+    pdf_path.write_bytes(content)
+    meta = SessionMeta(
+        session_id=session_id,
+        filename=filename,
+        status="queued",
+        stage="queued",
+        progress=0,
+        priority=priority,
+        callback_url=callback_url or DEFAULT_CALLBACK_URL or None,
+    )
+    _write_meta(meta)
+    try:
+        task_queue.put_nowait((priority, time.time(), session_id))
+    except asyncio.QueueFull as exc:
+        meta.status = "failed"
+        meta.error_code = "queue_full"
+        meta.error_message = "OCR 队列已满"
+        _write_meta(meta)
+        raise HTTPException(status_code=429, detail="OCR queue is full.") from exc
     return {
         "session_id": session_id,
-        "status": "processing",
-        "message": "PDF uploaded successfully. Processing started."
+        "status": "queued",
+        "message": "PDF uploaded successfully. Processing queued.",
     }
 
 
 @app.get("/status/{session_id}")
-async def get_status(session_id: str):
-    output_dir = os.path.join(TEMP_DIR, session_id, 'output')
-    
-    if not os.path.exists(output_dir):
-        raise HTTPException(status_code=404, detail="Session not found.")
-    
-    status_file = os.path.join(output_dir, 'status.txt')
-    if not os.path.exists(status_file):
-        return {"session_id": session_id, "status": "processing"}
-    
-    with open(status_file, 'r', encoding='utf-8') as f:
-        status = f.read().strip()
-    
-    return {
-        "session_id": session_id,
-        "status": status,
-        "is_completed": status == 'completed',
-        "is_failed": status.startswith('failed')
-    }
+async def get_status(session_id: str) -> dict[str, Any]:
+    meta = _read_meta(session_id)
+    payload = asdict(meta)
+    payload.update(
+        {
+            "is_completed": meta.status == "completed",
+            "is_failed": meta.status == "failed",
+        }
+    )
+    return payload
 
 
 @app.get("/result/{session_id}")
-async def get_result(session_id: str):
-    output_dir = os.path.join(TEMP_DIR, session_id, 'output')
-    
-    if not os.path.exists(output_dir):
-        raise HTTPException(status_code=404, detail="Session not found.")
-    
-    status_file = os.path.join(output_dir, 'status.txt')
-    if os.path.exists(status_file):
-        with open(status_file, 'r', encoding='utf-8') as f:
-            status = f.read().strip()
-        
-        if status != 'completed':
-            if status == 'processing':
-                raise HTTPException(status_code=202, detail="Processing is still in progress.")
-            else:
-                raise HTTPException(status_code=500, detail=f"Processing failed: {status}")
-    
-    zip_path = os.path.join(TEMP_DIR, f"{session_id}_results.zip")
-    
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(output_dir):
+async def get_result(session_id: str) -> FileResponse:
+    _ensure_completed(session_id)
+    output_dir = _output_dir(session_id)
+    zip_path = Path(TEMP_DIR) / f"{session_id}_results.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for root, _dirs, files in os.walk(output_dir):
             for file in files:
-                if file != 'status.txt':
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, output_dir)
-                    zipf.write(file_path, arcname)
-    
-    return FileResponse(
-        path=zip_path,
-        media_type='application/zip',
-        filename=f"{session_id}_results.zip"
-    )
+                if file == "status.txt":
+                    continue
+                file_path = Path(root) / file
+                zipf.write(file_path, file_path.relative_to(output_dir))
+    return FileResponse(path=zip_path, media_type="application/zip", filename=f"{session_id}_results.zip")
 
 
 @app.get("/result/{session_id}/markdown")
-async def get_markdown(session_id: str):
-    output_dir = os.path.join(TEMP_DIR, session_id, 'output')
-    
-    if not os.path.exists(output_dir):
-        raise HTTPException(status_code=404, detail="Session not found.")
-    
-    status_file = os.path.join(output_dir, 'status.txt')
-    if os.path.exists(status_file):
-        with open(status_file, 'r', encoding='utf-8') as f:
-            status = f.read().strip()
-        
-        if status != 'completed':
-            if status == 'processing':
-                raise HTTPException(status_code=202, detail="Processing is still in progress.")
-            else:
-                raise HTTPException(status_code=500, detail=f"Processing failed: {status}")
-    
-    markdown_path = os.path.join(output_dir, 'result.md')
-    if not os.path.exists(markdown_path):
+async def get_markdown(session_id: str, include_meta: bool = False) -> dict[str, Any]:
+    meta = _ensure_completed(session_id)
+    markdown_path = _output_dir(session_id) / "result.md"
+    if not markdown_path.exists():
         raise HTTPException(status_code=404, detail="Markdown result not found.")
-    
-    with open(markdown_path, 'r', encoding='utf-8') as f:
-        markdown_content = f.read()
-    
-    return {
-        "session_id": session_id,
-        "markdown": markdown_content
-    }
+    markdown = markdown_path.read_text(encoding="utf-8")
+    if include_meta:
+        return {
+            "session_id": session_id,
+            "markdown": markdown,
+            "page_count": meta.page_count,
+            "outline": _extract_outline(markdown),
+            "processed_at": meta.processed_at,
+        }
+    return {"session_id": session_id, "markdown": markdown}
 
 
 @app.get("/result/{session_id}/images")
-async def get_images(session_id: str):
-    output_dir = os.path.join(TEMP_DIR, session_id, 'output')
-    
-    if not os.path.exists(output_dir):
-        raise HTTPException(status_code=404, detail="Session not found.")
-    
-    status_file = os.path.join(output_dir, 'status.txt')
-    if os.path.exists(status_file):
-        with open(status_file, 'r', encoding='utf-8') as f:
-            status = f.read().strip()
-        
-        if status != 'completed':
-            if status == 'processing':
-                raise HTTPException(status_code=202, detail="Processing is still in progress.")
-            else:
-                raise HTTPException(status_code=500, detail=f"Processing failed: {status}")
-    
-    images_dir = os.path.join(output_dir, 'images')
-    if not os.path.exists(images_dir):
+async def get_images(session_id: str) -> FileResponse:
+    _ensure_completed(session_id)
+    images_dir = _output_dir(session_id) / "images"
+    if not images_dir.exists():
         raise HTTPException(status_code=404, detail="No images found.")
-    
-    zip_path = os.path.join(TEMP_DIR, f"{session_id}_images.zip")
-    
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(images_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                arcname = file
-                zipf.write(file_path, arcname)
-    
-    return FileResponse(
-        path=zip_path,
-        media_type='application/zip',
-        filename=f"{session_id}_images.zip"
-    )
+    zip_path = Path(TEMP_DIR) / f"{session_id}_images.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for file_path in sorted(images_dir.iterdir()):
+            if file_path.is_file():
+                zipf.write(file_path, file_path.name)
+    return FileResponse(path=zip_path, media_type="application/zip", filename=f"{session_id}_images.zip")
 
 
 @app.get("/result/{session_id}/image/{image_name}")
-async def get_single_image(session_id: str, image_name: str):
-    output_dir = os.path.join(TEMP_DIR, session_id, 'output')
-    
-    if not os.path.exists(output_dir):
-        raise HTTPException(status_code=404, detail="Session not found.")
-    
-    image_path = os.path.join(output_dir, 'images', image_name)
-    if not os.path.exists(image_path):
+async def get_single_image(session_id: str, image_name: str) -> FileResponse:
+    _ensure_completed(session_id)
+    image_path = _output_dir(session_id) / "images" / Path(image_name).name
+    if not image_path.exists():
         raise HTTPException(status_code=404, detail="Image not found.")
-    
-    return FileResponse(
-        path=image_path,
-        media_type='image/jpeg'
-    )
+    return FileResponse(path=image_path, media_type=_mime_for(image_path.name))
 
 
 @app.get("/result/{session_id}/images/list", response_model=ImageListResponse)
-async def get_images_list(session_id: str):
-    output_dir = os.path.join(TEMP_DIR, session_id, 'output')
-    
-    if not os.path.exists(output_dir):
-        raise HTTPException(status_code=404, detail="Session not found.")
-    
-    status_file = os.path.join(output_dir, 'status.txt')
-    if os.path.exists(status_file):
-        with open(status_file, 'r', encoding='utf-8') as f:
-            status = f.read().strip()
-        
-        if status != 'completed':
-            if status == 'processing':
-                raise HTTPException(status_code=202, detail="Processing is still in progress.")
-            else:
-                raise HTTPException(status_code=500, detail=f"Processing failed: {status}")
-    
-    images_dir = os.path.join(output_dir, 'images')
-    if not os.path.exists(images_dir):
+async def get_images_list(session_id: str, request: Request) -> ImageListResponse:
+    _ensure_completed(session_id)
+    images_dir = _output_dir(session_id) / "images"
+    if not images_dir.exists():
         return ImageListResponse(session_id=session_id, total=0, images=[])
-    
     images = []
-    for file in sorted(os.listdir(images_dir)):
-        if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')):
-            file_path = os.path.join(images_dir, file)
-            file_size = os.path.getsize(file_path)
-            
-            image_url = f"/result/{session_id}/image/{file}"
-            
-            images.append(ImageInfo(
-                name=file,
-                url=image_url,
-                size=file_size
-            ))
-    
-    return ImageListResponse(
-        session_id=session_id,
-        total=len(images),
-        images=images
-    )
+    for file_path in sorted(images_dir.iterdir()):
+        if not _is_image(file_path.name):
+            continue
+        images.append(
+            ImageInfo(
+                name=file_path.name,
+                url=str(request.url_for("get_single_image", session_id=session_id, image_name=file_path.name)),
+                size=file_path.stat().st_size,
+            )
+        )
+    return ImageListResponse(session_id=session_id, total=len(images), images=images)
+
+
+@app.get("/result/{session_id}/assets")
+async def get_assets(session_id: str) -> dict[str, Any]:
+    meta = _ensure_completed(session_id)
+    images_payload = _image_base64_payload(session_id, meta)
+    return {"session_id": session_id, "images": images_payload, "tables": [], "formulas": []}
 
 
 @app.get("/result/{session_id}/images/base64", response_model=ImagesDataResponse)
-async def get_images_base64(session_id: str):
-    output_dir = os.path.join(TEMP_DIR, session_id, 'output')
-    
-    if not os.path.exists(output_dir):
-        raise HTTPException(status_code=404, detail="Session not found.")
-    
-    status_file = os.path.join(output_dir, 'status.txt')
-    if os.path.exists(status_file):
-        with open(status_file, 'r', encoding='utf-8') as f:
-            status = f.read().strip()
-        
-        if status != 'completed':
-            if status == 'processing':
-                raise HTTPException(status_code=202, detail="Processing is still in progress.")
-            else:
-                raise HTTPException(status_code=500, detail=f"Processing failed: {status}")
-    
-    images_dir = os.path.join(output_dir, 'images')
-    if not os.path.exists(images_dir):
-        return ImagesDataResponse(session_id=session_id, total=0, images=[])
-    
-    images = []
-    mime_map = {
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.png': 'image/png',
-        '.gif': 'image/gif'
-    }
-    
-    for file in sorted(os.listdir(images_dir)):
-        file_lower = file.lower()
-        if file_lower.endswith(('.jpg', '.jpeg', '.png', '.gif')):
-            file_path = os.path.join(images_dir, file)
-            file_size = os.path.getsize(file_path)
-            
-            with open(file_path, 'rb') as f:
-                image_data = base64.b64encode(f.read()).decode('utf-8')
-            
-            ext = os.path.splitext(file_lower)[1]
-            mime_type = mime_map.get(ext, 'image/jpeg')
-            
-            images.append(ImageDataResponse(
-                name=file,
-                base64=image_data,
-                mime_type=mime_type,
-                size=file_size
-            ))
-    
-    return ImagesDataResponse(
-        session_id=session_id,
-        total=len(images),
-        images=images
-    )
+async def get_images_base64(session_id: str) -> ImagesDataResponse:
+    meta = _ensure_completed(session_id)
+    images = [
+        ImageDataResponse(
+            name=item["name"],
+            base64=item["base64"],
+            mime_type=item["mime"],
+            size=item["size"],
+            page_no=item.get("page_no"),
+            bbox=item.get("bbox"),
+        )
+        for item in _image_base64_payload(session_id, meta)
+    ]
+    return ImagesDataResponse(session_id=session_id, total=len(images), images=images)
 
 
-@app.delete("/session/{session_id}")
-async def delete_session(session_id: str):
-    session_dir = os.path.join(TEMP_DIR, session_id)
-    
-    if not os.path.exists(session_dir):
+@app.delete("/session/{session_id}", dependencies=[Depends(require_write_token)])
+async def delete_session(session_id: str) -> dict[str, str]:
+    session_dir = _session_dir(session_id).resolve()
+    temp_dir = Path(TEMP_DIR).resolve()
+    if not session_dir.exists() or temp_dir not in session_dir.parents:
         raise HTTPException(status_code=404, detail="Session not found.")
-    
+    shutil.rmtree(session_dir)
+    return {"session_id": session_id, "message": "Session deleted successfully."}
+
+
+async def _worker_loop() -> None:
+    while True:
+        _priority, _queued_at, session_id = await task_queue.get()
+        active_sessions.add(session_id)
+        try:
+            await _process_session(session_id)
+        finally:
+            active_sessions.discard(session_id)
+            task_queue.task_done()
+
+
+async def _process_session(session_id: str) -> None:
+    meta = _read_meta(session_id)
+    started = time.time()
+    meta.status = "running"
+    meta.stage = "rendering"
+    meta.progress = 5
+    meta.started_at = _now_iso()
+    _write_meta(meta)
     try:
-        shutil.rmtree(session_dir)
-        return {
-            "session_id": session_id,
-            "message": "Session deleted successfully."
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete session: {str(e)}")
+        pdf_path = _session_dir(session_id) / meta.filename
+        meta.stage = "inferring"
+        meta.progress = 30
+        _write_meta(meta)
+        result = await processor.process_pdf_async(
+            str(pdf_path),
+            str(_output_dir(session_id)),
+            timeout_seconds=GENERATE_TIMEOUT_SECONDS,
+        )
+        meta.stage = "post_processing"
+        meta.progress = 90
+        meta.page_count = int(result.get("page_count") or 0)
+        meta.assets = list(result.get("assets") or [])
+        _write_meta(meta)
+        meta.status = "completed"
+        meta.progress = 100
+        meta.processed_at = _now_iso()
+        meta.elapsed_ms = int((time.time() - started) * 1000)
+        _write_meta(meta)
+        await _send_callback(meta)
+    except Exception as exc:
+        meta.status = "failed"
+        meta.error_code = exc.__class__.__name__
+        meta.error_message = str(exc)
+        meta.traceback_tail = "\n".join(traceback.format_exc().splitlines()[-20:])
+        meta.elapsed_ms = int((time.time() - started) * 1000)
+        _write_meta(meta)
+        await _send_callback(meta)
+
+
+async def _cleanup_loop() -> None:
+    while True:
+        await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+        now = time.time()
+        for session_dir in sorted(Path(TEMP_DIR).iterdir()):
+            if not session_dir.is_dir():
+                continue
+            meta_path = session_dir / "meta.json"
+            updated_at = meta_path.stat().st_mtime if meta_path.exists() else session_dir.stat().st_mtime
+            if now - updated_at > SESSION_TTL_SECONDS:
+                shutil.rmtree(session_dir)
+
+
+def _validate_pdf(file: UploadFile, content: bytes) -> None:
+    filename = file.filename or ""
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Invalid file. Only PDF files are allowed.")
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail=f"File size exceeds {MAX_FILE_SIZE // (1024 * 1024)}MB limit.")
+    if not content.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="Invalid file magic. PDF header is required.")
+
+
+async def _send_callback(meta: SessionMeta) -> None:
+    if not meta.callback_url:
+        return
+    payload = {
+        "idempotency_key": f"ocr-callback:{meta.session_id}:{meta.status}",
+        "session_id": meta.session_id,
+        "filename": meta.filename,
+        "status": meta.status,
+        "stage": meta.stage,
+        "progress": meta.progress,
+        "page_count": meta.page_count,
+        "uploaded_at": meta.uploaded_at,
+        "started_at": meta.started_at,
+        "updated_at": meta.updated_at,
+        "processed_at": meta.processed_at,
+        "elapsed_ms": meta.elapsed_ms,
+        "error_code": meta.error_code,
+        "error_message": meta.error_message,
+    }
+    headers = {}
+    if OCR_CALLBACK_TOKEN:
+        headers["Authorization"] = f"Bearer {OCR_CALLBACK_TOKEN}"
+    try:
+        await asyncio.to_thread(
+            requests.post,
+            meta.callback_url,
+            json=payload,
+            headers=headers,
+            timeout=CALLBACK_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        print(f"OCR callback failed: {meta.callback_url}")
+
+
+def _ensure_completed(session_id: str) -> SessionMeta:
+    meta = _read_meta(session_id)
+    if meta.status != "completed":
+        if meta.status in {"queued", "running"}:
+            raise HTTPException(status_code=202, detail="Processing is still in progress.")
+        raise HTTPException(status_code=500, detail=meta.error_message or "Processing failed.")
+    return meta
+
+
+def _image_base64_payload(session_id: str, meta: SessionMeta) -> list[dict[str, Any]]:
+    images_dir = _output_dir(session_id) / "images"
+    if not images_dir.exists():
+        return []
+    asset_map = {asset.get("name"): asset for asset in meta.assets}
+    payload = []
+    for file_path in sorted(images_dir.iterdir()):
+        if not _is_image(file_path.name):
+            continue
+        data = base64.b64encode(file_path.read_bytes()).decode("utf-8")
+        meta_item = asset_map.get(file_path.name, {})
+        payload.append(
+            {
+                "name": file_path.name,
+                "base64": data,
+                "mime": _mime_for(file_path.name),
+                "mime_type": _mime_for(file_path.name),
+                "size": file_path.stat().st_size,
+                "page_no": meta_item.get("page_no"),
+                "bbox": meta_item.get("bbox"),
+            }
+        )
+    return payload
+
+
+def _extract_outline(markdown: str) -> list[dict[str, Any]]:
+    items = []
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            level = len(stripped) - len(stripped.lstrip("#"))
+            items.append({"level": level, "title": stripped.lstrip("#").strip()})
+        elif stripped.startswith("第") or _looks_numbered_heading(stripped):
+            items.append({"level": 1, "title": stripped})
+    return items[:200]
+
+
+def _looks_numbered_heading(text: str) -> bool:
+    parts = text.split(maxsplit=1)
+    return bool(parts and parts[0].replace(".", "").isdigit() and "." in parts[0])
+
+
+def _is_image(name: str) -> bool:
+    return name.lower().endswith((".jpg", ".jpeg", ".png", ".gif", ".webp"))
+
+
+def _mime_for(name: str) -> str:
+    suffix = Path(name).suffix.lower()
+    return {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+    }.get(suffix, "application/octet-stream")
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host=API_HOST, port=API_PORT, workers=1)
