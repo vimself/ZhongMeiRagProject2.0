@@ -185,8 +185,19 @@ export interface IngestJobProgress {
   last_error: string | null
 }
 
+export interface AssetOut {
+  id: string
+  kind: string
+  page_no: number | null
+  bbox: Record<string, unknown> | null
+  storage_path: string
+  url: string | null
+  caption: string | null
+  created_at: string
+}
+
 export interface DocumentDetailResponse extends DocumentOut {
   latest_job: Record<string, unknown> | null
   parse_result: Record<string, unknown> | null
-  assets: Array<Record<string, unknown>>
+  assets: AssetOut[]
 }

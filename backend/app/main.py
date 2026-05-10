@@ -17,6 +17,7 @@ from app.api.documents import router as documents_router
 from app.api.health import router as health_router
 from app.api.knowledge_base import admin_router as kb_admin_router
 from app.api.knowledge_base import router as kb_router
+from app.api.pdf_preview import router as pdf_preview_router
 from app.api.user import router as user_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
@@ -43,6 +44,7 @@ def create_app() -> FastAPI:
     app.include_router(kb_router)
     app.include_router(kb_admin_router)
     app.include_router(documents_router)
+    app.include_router(pdf_preview_router)
     app.include_router(health_router)
 
     uploads_dir = Path("uploads")

@@ -31,12 +31,19 @@ class RetrievalDebugRequest(BaseModel):
 class RetrievalDebugItem(BaseModel):
     chunk_id: str
     document_id: str
-    chunk_index: int
+    document_title: str = ""
+    knowledge_base_id: str = ""
+    chunk_index: int = 0
     score: float
-    content: str
+    content: str = ""
     section_path: list[str]
+    section_text: str = ""
     page_start: int | None = None
     page_end: int | None = None
+    bbox: dict[str, Any] | None = None
+    snippet: str = ""
+    preview_url: str | None = None
+    download_url: str | None = None
 
 
 class RetrievalDebugResponse(BaseModel):

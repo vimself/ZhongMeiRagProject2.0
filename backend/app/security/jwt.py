@@ -88,6 +88,24 @@ def issue_pdf_token(
     )
 
 
+def issue_asset_token(
+    subject: str,
+    document_id: str,
+    asset_id: str,
+    knowledge_base_id: str | None = None,
+) -> IssuedToken:
+    settings = get_settings()
+    return _encode_token(
+        subject=subject,
+        token_type="asset_preview",
+        expires_delta=timedelta(minutes=settings.pdf_token_minutes),
+        doc=document_id,
+        asset=asset_id,
+        kb=knowledge_base_id,
+        scope="asset_preview",
+    )
+
+
 def decode_token(token: str, expected_type: str) -> TokenData:
     settings = get_settings()
     credentials_error = HTTPException(

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import DbSession, current_user
 from app.models.auth import User
+from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase, KnowledgeBasePermission
 
 VALID_ROLES = {"owner", "editor", "viewer"}
@@ -67,3 +68,20 @@ require_owner = _require_role({"owner"})
 RequireViewer = Annotated[tuple[KnowledgeBase, str], Depends(require_viewer)]
 RequireEditor = Annotated[tuple[KnowledgeBase, str], Depends(require_editor)]
 RequireOwner = Annotated[tuple[KnowledgeBase, str], Depends(require_owner)]
+
+
+async def require_document_role(
+    db: AsyncSession,
+    user: User,
+    document_id: str,
+    allowed: set[str],
+) -> tuple[Document, str]:
+    document = await db.get(Document, document_id)
+    if document is None or document.status == "disabled":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文档不存在")
+    if user.role == "admin":
+        return document, "admin"
+    role = await _get_user_kb_role(db, user.id, document.knowledge_base_id)
+    if role is None or role not in allowed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="没有访问此文档的权限")
+    return document, role

@@ -37,10 +37,21 @@ class DocumentUploadResponse(BaseModel):
     trace_id: str
 
 
+class AssetOut(BaseModel):
+    id: str
+    kind: str
+    page_no: int | None = None
+    bbox: dict[str, Any] | None = None
+    storage_path: str
+    url: str | None = None
+    caption: str | None = None
+    created_at: str
+
+
 class DocumentDetailResponse(DocumentOut):
     latest_job: dict[str, Any] | None = None
     parse_result: dict[str, Any] | None = None
-    assets: list[dict[str, Any]] = Field(default_factory=list)
+    assets: list[AssetOut] = Field(default_factory=list)
 
 
 class RetryDocumentResponse(BaseModel):

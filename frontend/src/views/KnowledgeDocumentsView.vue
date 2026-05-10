@@ -7,6 +7,7 @@ import {
   Search,
   UploadFilled,
   View,
+  Monitor,
 } from '@element-plus/icons-vue'
 import ElButton from 'element-plus/es/components/button/index.mjs'
 import ElDrawer from 'element-plus/es/components/drawer/index.mjs'
@@ -51,7 +52,10 @@ import {
   uploadDocument,
 } from '@/api/document'
 import { getKnowledgeBase } from '@/api/knowledge'
-import type { DocumentDetailResponse, DocumentOut, IngestJobProgress } from '@/api/types'
+import { signAssetToken } from '@/api/pdfPreview'
+import type { AssetOut, DocumentDetailResponse, DocumentOut, IngestJobProgress } from '@/api/types'
+import PdfViewer from '@/components/PdfViewer.vue'
+import { usePdfPreview } from '@/composables/usePdfPreview'
 
 const route = useRoute()
 const router = useRouter()
@@ -74,6 +78,9 @@ const timers = new Map<string, number>()
 const drawerVisible = ref(false)
 const detailLoading = ref(false)
 const detail = ref<DocumentDetailResponse | null>(null)
+
+const pdfDrawerVisible = ref(false)
+const pdfPreview = usePdfPreview()
 
 const statusOptions = [
   { label: '全部状态', value: '' },
@@ -211,6 +218,26 @@ async function openDetail(row: DocumentOut) {
     ElMessage.error('详情加载失败')
   } finally {
     detailLoading.value = false
+  }
+}
+
+async function openPdfPreview(row: DocumentOut, page?: number) {
+  pdfDrawerVisible.value = true
+  await pdfPreview.openPreview(row.id, page)
+}
+
+async function openDetailPdfPreview() {
+  if (!detail.value) return
+  pdfDrawerVisible.value = true
+  await pdfPreview.openPreview(detail.value.id)
+}
+
+async function openAssetPreview(asset: AssetOut) {
+  try {
+    const url = asset.url || (await signAssetToken(String(asset.id))).data.url
+    window.open(url, '_blank', 'noopener,noreferrer')
+  } catch {
+    ElMessage.error('资产预览链接签发失败')
   }
 }
 
@@ -378,10 +405,20 @@ onUnmounted(() => {
             {{ formatDateTime(row.created_at) }}
           </template>
         </ElTableColumn>
-        <ElTableColumn label="操作" width="210" fixed="right">
+        <ElTableColumn label="操作" width="270" fixed="right">
           <template #default="{ row }: { row: DocumentOut }">
             <div class="action-btns">
               <ElButton :icon="View" text size="small" @click="openDetail(row)">详情</ElButton>
+              <ElButton
+                v-if="row.status === 'ready'"
+                :icon="Monitor"
+                text
+                size="small"
+                type="primary"
+                @click="openPdfPreview(row)"
+              >
+                预览
+              </ElButton>
               <ElButton
                 v-if="row.status === 'failed'"
                 text
@@ -422,7 +459,18 @@ onUnmounted(() => {
     <ElDrawer v-model="drawerVisible" title="文档详情" size="560px">
       <div v-loading="detailLoading" class="detail">
         <template v-if="detail">
-          <h2>{{ detail.title }}</h2>
+          <div class="detail-header">
+            <h2>{{ detail.title }}</h2>
+            <ElButton
+              v-if="detail.status === 'ready'"
+              :icon="Monitor"
+              type="primary"
+              size="small"
+              @click="openDetailPdfPreview"
+            >
+              预览 PDF
+            </ElButton>
+          </div>
           <p class="detail-sub">{{ detail.filename }} · {{ statsText() }}</p>
           <section>
             <h3>章节结构</h3>
@@ -441,12 +489,39 @@ onUnmounted(() => {
               <div v-for="asset in detail.assets" :key="String(asset.id)" class="asset-item">
                 <span>{{ asset.kind }}</span>
                 <small>第 {{ asset.page_no || '—' }} 页</small>
+                <ElButton text size="small" type="primary" @click="openAssetPreview(asset)">
+                  查看
+                </ElButton>
               </div>
             </div>
             <ElEmpty v-else description="暂无资产" />
           </section>
         </template>
       </div>
+    </ElDrawer>
+
+    <ElDrawer
+      v-model="pdfDrawerVisible"
+      title="PDF 预览"
+      size="80%"
+      :before-close="
+        () => {
+          pdfPreview.closePreview()
+          pdfDrawerVisible = false
+        }
+      "
+    >
+      <div v-if="pdfPreview.loading.value" class="pdf-drawer-loading">加载中...</div>
+      <div v-else-if="pdfPreview.error.value" class="pdf-drawer-error">
+        {{ pdfPreview.error.value }}
+      </div>
+      <PdfViewer
+        v-else-if="pdfPreview.pdfUrl.value"
+        :url="pdfPreview.pdfUrl.value"
+        :initial-page="pdfPreview.currentPage.value"
+        :highlight-bbox="pdfPreview.highlightBbox.value"
+        @page-change="pdfPreview.onPageChange"
+      />
     </ElDrawer>
   </main>
 </template>
@@ -580,6 +655,17 @@ onUnmounted(() => {
   padding: 16px;
 }
 
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.detail-header h2 {
+  margin: 0;
+}
+
 .detail h2,
 .detail h3 {
   margin: 0 0 10px;
@@ -637,6 +723,16 @@ onUnmounted(() => {
 
 .asset-item small {
   color: #64748b;
+}
+
+.pdf-drawer-loading,
+.pdf-drawer-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+  color: #64748b;
+  font-size: 15px;
 }
 
 @media (width <= 860px) {

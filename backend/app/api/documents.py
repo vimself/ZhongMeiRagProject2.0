@@ -5,6 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
@@ -23,7 +24,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import _record_audit
 from app.api.deps import DbSession, current_user
-from app.api.knowledge_base_deps import RequireEditor, RequireViewer, _get_user_kb_role
+from app.api.knowledge_base_deps import (
+    RequireEditor,
+    RequireViewer,
+    require_document_role,
+)
 from app.celery_app import celery_app
 from app.core.config import get_settings
 from app.models.auth import User
@@ -34,9 +39,9 @@ from app.models.document import (
     DocumentParseResult,
     IngestCallbackReceipt,
     IngestStepReceipt,
-    KnowledgeChunkV2,
 )
 from app.schemas.document import (
+    AssetOut,
     DocumentDetailResponse,
     DocumentListResponse,
     DocumentOut,
@@ -50,6 +55,9 @@ from app.schemas.ingest import (
     RetrievalDebugRequest,
     RetrievalDebugResponse,
 )
+from app.security.jwt import issue_asset_token, issue_pdf_token
+from app.services.llm.client import DashScopeClient
+from app.services.rag.retriever import Retriever
 
 router = APIRouter(tags=["documents"])
 CurrentUser = Annotated[User, Depends(current_user)]
@@ -191,7 +199,7 @@ async def get_document(
     user: CurrentUser,
     db: DbSession,
 ) -> DocumentDetailResponse:
-    document, _role = await _require_document_role(
+    document, _role = await require_document_role(
         db, user, document_id, {"viewer", "editor", "owner"}
     )
     users_map = await _users_map(db, [document.uploader_id])
@@ -209,7 +217,10 @@ async def get_document(
         **base.model_dump(),
         latest_job=_job_payload(latest_job) if latest_job else None,
         parse_result=_parse_payload(parse_result) if parse_result else None,
-        assets=[_asset_payload(asset) for asset in assets],
+        assets=[
+            _asset_payload(asset, user_id=user.id, kb_id=document.knowledge_base_id)
+            for asset in assets
+        ],
     )
 
 
@@ -219,7 +230,7 @@ async def get_ingest_progress(
     user: CurrentUser,
     db: DbSession,
 ) -> IngestJobProgress:
-    document, _role = await _require_document_role(
+    document, _role = await require_document_role(
         db, user, document_id, {"viewer", "editor", "owner"}
     )
     job = await _latest_job(db, document.id)
@@ -263,7 +274,7 @@ async def retry_document(
     user: CurrentUser,
     db: DbSession,
 ) -> RetryDocumentResponse:
-    document, _role = await _require_document_role(db, user, document_id, {"owner"})
+    document, _role = await require_document_role(db, user, document_id, {"owner"})
     job = DocumentIngestJob(document_id=document.id, status="queued", trace_id=str(uuid.uuid4()))
     document.status = "pending"
     db.add(job)
@@ -294,7 +305,7 @@ async def disable_document(
     user: CurrentUser,
     db: DbSession,
 ) -> DocumentOut:
-    document, _role = await _require_document_role(db, user, document_id, {"owner"})
+    document, _role = await require_document_role(db, user, document_id, {"owner"})
     document.status = "disabled"
     await _record_audit(
         db,
@@ -319,33 +330,16 @@ async def retrieval_debug(
 ) -> RetrievalDebugResponse:
     if user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
-    query = select(KnowledgeChunkV2).where(KnowledgeChunkV2.knowledge_base_id == body.kb_id)
-    doc_kind = body.filters.get("doc_kind")
-    scheme_type = body.filters.get("scheme_type")
-    if isinstance(doc_kind, str) and doc_kind:
-        query = query.where(KnowledgeChunkV2.doc_kind == doc_kind)
-    if isinstance(scheme_type, str) and scheme_type:
-        query = query.where(KnowledgeChunkV2.scheme_type == scheme_type)
-    chunks = (await db.execute(query.limit(1000))).scalars().all()
-    ranked = sorted(
-        ((_debug_score(body.query, chunk.content), chunk) for chunk in chunks),
-        key=lambda item: item[0],
-        reverse=True,
-    )[: body.k]
-    items = [
-        RetrievalDebugItem(
-            chunk_id=chunk.id,
-            document_id=chunk.document_id,
-            chunk_index=chunk.chunk_index,
-            score=score,
-            content=chunk.content,
-            section_path=chunk.section_path,
-            page_start=chunk.page_start,
-            page_end=chunk.page_end,
-        )
-        for score, chunk in ranked
-        if score > 0
-    ]
+    retriever = Retriever(db)
+    query_vector = await _query_embedding(body.query)
+    results = await retriever.retrieve(
+        kb_id=body.kb_id,
+        query=body.query,
+        k=body.k,
+        filters=body.filters,
+        query_vector=query_vector,
+    )
+    items = [_retrieval_item(r, user_id=user.id) for r in results]
     return RetrievalDebugResponse(items=items, total=len(items))
 
 
@@ -428,23 +422,6 @@ def _normalize_doc_kind(doc_kind: str) -> str:
     return doc_kind if doc_kind in allowed else "other"
 
 
-async def _require_document_role(
-    db: AsyncSession,
-    user: User,
-    document_id: str,
-    allowed: set[str],
-) -> tuple[Document, str]:
-    document = await db.get(Document, document_id)
-    if document is None or document.status == "disabled":
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文档不存在")
-    if user.role == "admin":
-        return document, "admin"
-    role = await _get_user_kb_role(db, user.id, document.knowledge_base_id)
-    if role is None or role not in allowed:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="没有访问此文档的权限")
-    return document, role
-
-
 async def _users_map(db: AsyncSession, user_ids: list[str]) -> dict[str, str]:
     if not user_ids:
         return {}
@@ -510,16 +487,70 @@ def _parse_payload(result: DocumentParseResult) -> dict[str, Any]:
     }
 
 
-def _asset_payload(asset: DocumentAsset) -> dict[str, Any]:
-    return {
-        "id": asset.id,
-        "kind": asset.kind,
-        "page_no": asset.page_no,
-        "bbox": asset.bbox_json,
-        "storage_path": asset.storage_path,
-        "caption": asset.caption,
-        "created_at": asset.created_at.isoformat(),
-    }
+def _asset_payload(asset: DocumentAsset, *, user_id: str, kb_id: str) -> AssetOut:
+    issued = issue_asset_token(
+        subject=user_id,
+        document_id=asset.document_id,
+        asset_id=asset.id,
+        knowledge_base_id=kb_id,
+    )
+    url = f"/api/v2/assets/preview?asset_id={asset.id}&token={quote(issued.token)}"
+    return AssetOut(
+        id=asset.id,
+        kind=asset.kind,
+        page_no=asset.page_no,
+        bbox=asset.bbox_json,
+        storage_path=asset.storage_path,
+        url=url,
+        caption=asset.caption,
+        created_at=asset.created_at.isoformat(),
+    )
+
+
+def _retrieval_item(r: Any, *, user_id: str) -> RetrievalDebugItem:
+    issued = issue_pdf_token(
+        subject=user_id,
+        document_id=r.document_id,
+        knowledge_base_id=r.knowledge_base_id,
+    )
+    token = quote(issued.token)
+    preview_url = (
+        f"/api/v2/pdf/preview?document_id={r.document_id}"
+        f"&page={r.page_start or 1}&token={token}"
+    )
+    bbox = _bbox_fragment(r.bbox)
+    if bbox:
+        preview_url = f"{preview_url}#bbox={bbox}"
+    return RetrievalDebugItem(
+        chunk_id=r.chunk_id,
+        document_id=r.document_id,
+        document_title=r.document_title,
+        knowledge_base_id=r.knowledge_base_id,
+        chunk_index=0,
+        score=r.score,
+        content=r.section_text,
+        section_path=r.section_path,
+        section_text=r.section_text,
+        page_start=r.page_start,
+        page_end=r.page_end,
+        bbox=r.bbox,
+        snippet=r.snippet,
+        preview_url=preview_url,
+        download_url=f"/api/v2/documents/{r.document_id}/download?token={token}",
+    )
+
+
+def _bbox_fragment(bbox: dict[str, Any] | None) -> str:
+    if not bbox:
+        return ""
+    x = bbox.get("x", bbox.get("left"))
+    y = bbox.get("y", bbox.get("top"))
+    width = bbox.get("width", bbox.get("w"))
+    height = bbox.get("height", bbox.get("h"))
+    values = [x, y, width, height]
+    if not all(isinstance(value, int | float) for value in values):
+        return ""
+    return ",".join(str(value) for value in values)
 
 
 def _send_ingest_task(*, job_id: str, document_id: str, actor_user_id: str) -> None:
@@ -533,9 +564,10 @@ def _send_ingest_task(*, job_id: str, document_id: str, actor_user_id: str) -> N
     )
 
 
-def _debug_score(query: str, content: str) -> float:
-    query_terms = [term for term in query.lower().split() if term]
-    lowered = content.lower()
-    lexical = sum(lowered.count(term) for term in query_terms)
-    phrase = 3 if query.lower() in lowered else 0
-    return float(lexical + phrase)
+async def _query_embedding(query: str) -> list[float] | None:
+    try:
+        async with DashScopeClient() as client:
+            embeddings = await client.embed_batch([query])
+    except Exception:
+        return None
+    return embeddings[0] if embeddings else None

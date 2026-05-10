@@ -69,3 +69,37 @@ async def pdf_token_user(
         document_id=document_id,
         knowledge_base_id=knowledge_base_id if isinstance(knowledge_base_id, str) else None,
     )
+
+
+@dataclass(frozen=True)
+class AssetTokenUser:
+    user: User
+    token: TokenData
+    document_id: str
+    asset_id: str
+    knowledge_base_id: str | None
+
+
+async def asset_token_user(
+    token: PdfToken,
+    db: DbSession,
+) -> AssetTokenUser:
+    token_data = decode_token(token, expected_type="asset_preview")
+    user = await db.get(User, token_data.subject)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在或已停用")
+    document_id = token_data.claims.get("doc")
+    asset_id = token_data.claims.get("asset")
+    knowledge_base_id = token_data.claims.get("kb")
+    if not isinstance(document_id, str) or not isinstance(asset_id, str):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="资产 token 缺少访问范围",
+        )
+    return AssetTokenUser(
+        user=user,
+        token=token_data,
+        document_id=document_id,
+        asset_id=asset_id,
+        knowledge_base_id=knowledge_base_id if isinstance(knowledge_base_id, str) else None,
+    )

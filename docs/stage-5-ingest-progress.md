@@ -34,7 +34,7 @@
 | `knowledge_chunks_v2` | 章节感知切片，含 section_path、section_id、页码、向量/稀疏字段 |
 | `knowledge_page_index_v2` | 按页聚合的页面索引 |
 
-SQLite 下 `vector` / `sparse` 使用 JSON，SeekDB 下迁移中通过 `op.execute` 转为 `VECTOR(1024)` / `SPARSE_VECTOR` 并创建向量索引。
+SQLite 下 `vector` / `sparse` 使用 JSON。SeekDB 迁移会尝试通过 `op.execute` 转为 `VECTOR(1024)` / `SPARSE_VECTOR` 并创建索引；Stage 6 复验发现当前本地 SeekDB 测试镜像对相关 DDL 支持不完整，因此迁移已改为可降级执行，保留 JSON/fallback 路径以保证服务启动。
 
 ### 2.2 服务层
 
@@ -164,15 +164,15 @@ API 写操作记录当前用户；worker 失败使用文档上传者作为 actor
 
 - 冒烟链路使用 mock OCR 与 mock DashScope 覆盖，未连接真实工作站和真实 DashScope。
 - `retrieval/debug` 当前为 Stage 6/7 铺垫的轻量调试实现，真实 RRF、BM25、向量召回排序将在 Stage 6 完整化。
-- OCR 工作站代码已在本仓库改造，尚未部署到 `222.195.4.65:8899`。
+- OCR 工作站代码已在本仓库改造，已部署到 `222.195.4.65:8899` 并运行（Stage 6 确认）。
 
 ---
 
 ## 6. 下一步建议（Stage 6）
 
-- 实现正式检索服务：向量召回、BM25、RRF、过滤器、权限裁剪。
-- 增加 PDF 预览与 bbox 高亮接口。
-- 为 `knowledge_chunks_v2` 接入 SeekDB 真实向量查询语法并补压测。
+- 实现正式检索服务：向量召回、BM25、RRF、过滤器、权限裁剪。 ✅ 已在 Stage 6 完成
+- 增加 PDF 预览与 bbox 高亮接口。 ✅ 已在 Stage 6 完成
+- 为 `knowledge_chunks_v2` 接入 SeekDB 真实向量查询语法并补压测。✅ Stage 6 已实现原生 SQL 优先 + fallback；当前本地 SeekDB 镜像不支持完整向量/全文 DDL，后续可更换支持版本后复验原生索引性能。
 
 ---
 
