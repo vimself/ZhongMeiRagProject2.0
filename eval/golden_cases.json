@@ -1,0 +1,142 @@
+[
+  {
+    "id": "eval-001",
+    "question": "施工现场临时用电应如何设置？",
+    "reference_answer": "临时用电应采用 TN-S 系统，配备总配电箱、分配电箱、开关箱三级配电，实行“一机一闸一漏一箱”并配置漏电保护器。",
+    "expected_citations_keywords": ["临时用电", "三级配电", "漏电保护"],
+    "knowledge_base_hint": "施工现场临时用电安全规范"
+  },
+  {
+    "id": "eval-002",
+    "question": "高处作业需要佩戴什么个人防护用品？",
+    "reference_answer": "高处作业应佩戴安全帽、安全带、防滑鞋，必要时使用安全绳及自锁器，安全带应高挂低用。",
+    "expected_citations_keywords": ["安全带", "高挂低用", "高处作业"],
+    "knowledge_base_hint": "高处作业安全"
+  },
+  {
+    "id": "eval-003",
+    "question": "基坑支护的监测频率有何要求？",
+    "reference_answer": "基坑开挖及使用期间应进行位移、沉降、地下水位等监测，通常每日至少一次，雨季或异常情况应加密监测。",
+    "expected_citations_keywords": ["基坑", "监测", "位移"],
+    "knowledge_base_hint": "基坑支护"
+  },
+  {
+    "id": "eval-004",
+    "question": "模板拆除需满足哪些混凝土强度要求？",
+    "reference_answer": "侧模在混凝土强度达到 2.5 MPa 以上可拆除，底模根据跨度不同需达到设计强度的 50%~100%。",
+    "expected_citations_keywords": ["模板", "强度", "拆除"],
+    "knowledge_base_hint": "模板工程"
+  },
+  {
+    "id": "eval-005",
+    "question": "塔吊安装前的场地有哪些要求？",
+    "reference_answer": "塔吊基础应按专项方案浇筑，地基承载力满足设计要求，周边无高压线及障碍物，作业半径内应设置安全警戒区。",
+    "expected_citations_keywords": ["塔吊", "基础", "警戒"],
+    "knowledge_base_hint": "起重吊装"
+  },
+  {
+    "id": "eval-006",
+    "question": "防水施工的基层应满足什么条件？",
+    "reference_answer": "基层应牢固、平整、洁净、干燥，含水率符合防水材料要求，阴阳角处做成圆弧或钝角。",
+    "expected_citations_keywords": ["防水", "基层", "含水率"],
+    "knowledge_base_hint": "防水工程"
+  },
+  {
+    "id": "eval-007",
+    "question": "深基坑专项施工方案应包含哪些内容？",
+    "reference_answer": "应包含工程概况、支护结构设计、土方开挖、降排水、监测方案、应急处置等内容，并经专家论证。",
+    "expected_citations_keywords": ["深基坑", "专项方案", "专家论证"],
+    "knowledge_base_hint": "专项施工方案"
+  },
+  {
+    "id": "eval-008",
+    "question": "钢筋焊接接头的质量如何验收？",
+    "reference_answer": "钢筋焊接接头应进行外观检查及力学性能抽检，包括拉伸、弯曲试验，合格率应满足规范要求。",
+    "expected_citations_keywords": ["钢筋", "焊接", "抽检"],
+    "knowledge_base_hint": "钢筋工程"
+  },
+  {
+    "id": "eval-009",
+    "question": "施工现场消防通道的宽度要求？",
+    "reference_answer": "消防车道宽度不应小于 4 m，转弯半径不应小于 12 m，沿线应避免障碍物占用。",
+    "expected_citations_keywords": ["消防车道", "宽度", "转弯"],
+    "knowledge_base_hint": "施工现场消防"
+  },
+  {
+    "id": "eval-010",
+    "question": "混凝土浇筑过程如何控制温度裂缝？",
+    "reference_answer": "控制入模温度、分层浇筑、降低水化热、覆盖保温养护、在大体积混凝土中预设冷却管及温度监测点。",
+    "expected_citations_keywords": ["大体积", "水化热", "养护"],
+    "knowledge_base_hint": "混凝土工程"
+  },
+  {
+    "id": "eval-011",
+    "question": "脚手架搭设的扫地杆高度要求？",
+    "reference_answer": "纵向扫地杆应设置于距底座上皮不大于 200 mm 处，横向扫地杆紧贴纵向扫地杆下方连接。",
+    "expected_citations_keywords": ["脚手架", "扫地杆", "200"],
+    "knowledge_base_hint": "脚手架工程"
+  },
+  {
+    "id": "eval-012",
+    "question": "施工升降机的安全装置有哪些？",
+    "reference_answer": "应配置防坠安全器、上/下限位、极限限位、缓冲器、门联锁、超载保护等安全装置。",
+    "expected_citations_keywords": ["升降机", "防坠", "限位"],
+    "knowledge_base_hint": "施工升降机"
+  },
+  {
+    "id": "eval-013",
+    "question": "盾构始发的准备工作主要包括哪些？",
+    "reference_answer": "包括洞门加固、反力架安装、负环管片拼装、始发密封件安装和设备调试。",
+    "expected_citations_keywords": ["盾构", "始发", "洞门"],
+    "knowledge_base_hint": "盾构施工"
+  },
+  {
+    "id": "eval-014",
+    "question": "桥梁支座更换时的安全措施？",
+    "reference_answer": "采用同步顶升，多点监测梁体位移，设置防坠落措施，分级顶升并复核支座标高。",
+    "expected_citations_keywords": ["支座", "顶升", "同步"],
+    "knowledge_base_hint": "桥梁工程"
+  },
+  {
+    "id": "eval-015",
+    "question": "给水管道试压的主要步骤？",
+    "reference_answer": "管道试压前应清洗、排气，分段加压至试验压力并稳压观察压降是否符合规范。",
+    "expected_citations_keywords": ["管道", "试压", "稳压"],
+    "knowledge_base_hint": "给排水工程"
+  },
+  {
+    "id": "eval-016",
+    "question": "外墙保温系统防火要求？",
+    "reference_answer": "保温材料应满足规定的燃烧性能等级，高层建筑外保温宜采用 A 级材料并设置防火隔离带。",
+    "expected_citations_keywords": ["外保温", "防火", "A 级"],
+    "knowledge_base_hint": "建筑节能"
+  },
+  {
+    "id": "eval-017",
+    "question": "电缆桥架敷设的水平间距要求？",
+    "reference_answer": "电缆桥架水平支架的间距不应大于 1.5 m，垂直方向不应大于 2 m，不同电压等级电缆应分层敷设。",
+    "expected_citations_keywords": ["桥架", "支架", "间距"],
+    "knowledge_base_hint": "电气施工"
+  },
+  {
+    "id": "eval-018",
+    "question": "工程竣工验收需要哪些参建单位参加？",
+    "reference_answer": "建设、勘察、设计、施工、监理单位均应参加竣工验收，并共同签署竣工验收意见。",
+    "expected_citations_keywords": ["竣工验收", "监理", "建设单位"],
+    "knowledge_base_hint": "质量验收"
+  },
+  {
+    "id": "eval-019",
+    "question": "装配式混凝土构件运输中需要注意什么？",
+    "reference_answer": "应根据构件形状选用合适支架，固定牢靠，避免碰撞，并对易损部位加软垫保护。",
+    "expected_citations_keywords": ["装配式", "构件", "运输"],
+    "knowledge_base_hint": "装配式建筑"
+  },
+  {
+    "id": "eval-020",
+    "question": "有限空间作业必须遵守哪些安全规定？",
+    "reference_answer": "实行作业许可、通风检测合格、专人监护、配备应急装备，严禁未检测即入内作业。",
+    "expected_citations_keywords": ["有限空间", "检测", "监护"],
+    "knowledge_base_hint": "有限空间作业"
+  }
+]

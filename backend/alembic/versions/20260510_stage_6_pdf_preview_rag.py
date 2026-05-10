@@ -29,10 +29,15 @@ def upgrade() -> None:
         _try_execute(
             "CREATE FULLTEXT INDEX ix_kchunks_v2_content_ft ON knowledge_chunks_v2(content)"
         )
+        _try_execute(
+            "CREATE FULLTEXT INDEX kcv_content_ngram ON knowledge_chunks_v2(content) "
+            "WITH PARSER NGRAM PARSER_PROPERTIES=(ngram_token_size=2)"
+        )
 
 
 def downgrade() -> None:
     if not _is_sqlite():
+        _try_execute("DROP INDEX kcv_content_ngram ON knowledge_chunks_v2")
         _try_execute("DROP INDEX ix_kchunks_v2_content_ft ON knowledge_chunks_v2")
 
 

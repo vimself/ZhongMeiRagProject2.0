@@ -11,6 +11,11 @@ from app.core.config import get_settings
 from app.models.document import KnowledgeChunkV2
 from app.services.ingest.chunker import ChunkCandidate
 from app.services.llm.client import DashScopeClient
+from app.services.rag.vector_utils import (
+    dense_vector_literal,
+    sparse_vector_literal,
+    text_term_weights,
+)
 
 
 class TrackAIndexer:
@@ -61,6 +66,7 @@ class TrackAIndexer:
             delete(KnowledgeChunkV2).where(KnowledgeChunkV2.document_id == document_id)
         )
         for chunk, vector in zip(chunks, vectors, strict=True):
+            sparse = _simple_sparse(chunk.content)
             db.add(
                 KnowledgeChunkV2(
                     knowledge_base_id=knowledge_base_id,
@@ -78,7 +84,9 @@ class TrackAIndexer:
                     tokens=chunk.tokens,
                     sha256=chunk.sha256,
                     vector=vector,
-                    sparse=_simple_sparse(chunk.content),
+                    sparse=sparse,
+                    vector_native=dense_vector_literal(vector) if vector else None,
+                    sparse_native=sparse_vector_literal(sparse),
                 )
             )
         await db.flush()
@@ -111,7 +119,4 @@ class TrackAIndexer:
 
 
 def _simple_sparse(text: str) -> dict[str, float]:
-    sparse: dict[str, float] = {}
-    for token in text.lower().split():
-        sparse[token] = sparse.get(token, 0.0) + 1.0
-    return sparse
+    return text_term_weights(text)

@@ -55,7 +55,12 @@ class Document(Base):
     )
 
     __table_args__ = (
-        Index("ix_documents_kb_status_created", "knowledge_base_id", "status", "created_at"),
+        Index(
+            "ix_documents_kb_status_created",
+            "knowledge_base_id",
+            "status",
+            "created_at",
+        ),
         Index("ix_documents_sha256", "sha256"),
     )
 
@@ -65,7 +70,10 @@ class DocumentParseResult(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     document_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, unique=True
+        String(36),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
     )
     ocr_session_id: Mapped[str | None] = mapped_column(String(128))
     markdown_path: Mapped[str] = mapped_column(String(1024), nullable=False)
@@ -129,7 +137,9 @@ class IngestStepReceipt(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     job_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("document_ingest_jobs.id", ondelete="CASCADE"), nullable=False
+        String(36),
+        ForeignKey("document_ingest_jobs.id", ondelete="CASCADE"),
+        nullable=False,
     )
     step: Mapped[str] = mapped_column(String(64), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
@@ -178,10 +188,17 @@ class KnowledgeChunkV2(Base):
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     vector: Mapped[list[float] | None] = mapped_column(JSON)
     sparse: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    vector_native: Mapped[str | None] = mapped_column(Text)
+    sparse_native: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
-        Index("ix_kchunks_v2_kb_kind_scheme", "knowledge_base_id", "doc_kind", "scheme_type"),
+        Index(
+            "ix_kchunks_v2_kb_kind_scheme",
+            "knowledge_base_id",
+            "doc_kind",
+            "scheme_type",
+        ),
         Index("ix_kchunks_v2_doc_section", "document_id", "section_id"),
         Index("ix_kchunks_v2_document_id", "document_id"),
     )

@@ -40,14 +40,25 @@ def upgrade() -> None:
         sa.Column("storage_path", sa.String(length=1024), nullable=False),
         sa.Column("doc_kind", sa.String(length=32), nullable=False, server_default="other"),
         sa.Column("scheme_type", sa.String(length=64), nullable=True),
-        sa.Column("is_standard_clause", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column(
+            "is_standard_clause",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.text("0"),
+        ),
         sa.Column("status", sa.String(length=32), nullable=False, server_default="pending"),
         sa.Column("page_count", sa.Integer(), nullable=True),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.Column(
-            "updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.ForeignKeyConstraint(["knowledge_base_id"], ["knowledge_bases.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["uploader_id"], ["users.id"], ondelete="RESTRICT"),
@@ -70,7 +81,10 @@ def upgrade() -> None:
         sa.Column("outline_json", _json_type(), nullable=False),
         sa.Column("stats_json", _json_type(), nullable=False),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
@@ -87,7 +101,10 @@ def upgrade() -> None:
         sa.Column("storage_path", sa.String(length=1024), nullable=False),
         sa.Column("caption", sa.String(length=1024), nullable=True),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
@@ -101,15 +118,24 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=32), nullable=False, server_default="queued"),
         sa.Column("attempt", sa.Integer(), nullable=False, server_default="0"),
         sa.Column(
-            "available_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+            "available_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.Column("last_error", sa.Text(), nullable=True),
         sa.Column("trace_id", sa.String(length=64), nullable=False),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.Column(
-            "updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
@@ -130,7 +156,10 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("payload_json", _json_type(), nullable=False),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.ForeignKeyConstraint(["job_id"], ["document_ingest_jobs.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
@@ -144,7 +173,10 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("idempotency_key", sa.String(length=255), nullable=False),
         sa.Column(
-            "received_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+            "received_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.Column("payload_json", _json_type(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
@@ -163,15 +195,25 @@ def upgrade() -> None:
         sa.Column("page_start", sa.Integer(), nullable=True),
         sa.Column("page_end", sa.Integer(), nullable=True),
         sa.Column("bbox_json", _json_type(), nullable=True),
-        sa.Column("content_type", sa.String(length=32), nullable=False, server_default="paragraph"),
+        sa.Column(
+            "content_type",
+            sa.String(length=32),
+            nullable=False,
+            server_default="paragraph",
+        ),
         sa.Column("doc_kind", sa.String(length=32), nullable=False, server_default="other"),
         sa.Column("scheme_type", sa.String(length=64), nullable=True),
         sa.Column("tokens", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("sha256", sa.String(length=64), nullable=False),
         sa.Column("vector", _json_type(), nullable=True),
         sa.Column("sparse", _json_type(), nullable=True),
+        sa.Column("vector_native", sa.Text(), nullable=True),
+        sa.Column("sparse_native", sa.Text(), nullable=True),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.ForeignKeyConstraint(["knowledge_base_id"], ["knowledge_bases.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
@@ -183,18 +225,22 @@ def upgrade() -> None:
         ["knowledge_base_id", "doc_kind", "scheme_type"],
     )
     op.create_index(
-        "ix_kchunks_v2_doc_section", "knowledge_chunks_v2", ["document_id", "section_id"]
+        "ix_kchunks_v2_doc_section",
+        "knowledge_chunks_v2",
+        ["document_id", "section_id"],
     )
     op.create_index("ix_kchunks_v2_document_id", "knowledge_chunks_v2", ["document_id"])
     if not _is_sqlite():
-        _try_execute("ALTER TABLE knowledge_chunks_v2 MODIFY COLUMN vector VECTOR(1024)")
-        _try_execute("ALTER TABLE knowledge_chunks_v2 MODIFY COLUMN sparse SPARSE_VECTOR")
+        _try_execute("ALTER TABLE knowledge_chunks_v2 MODIFY COLUMN vector_native VECTOR(1024)")
+        _try_execute("ALTER TABLE knowledge_chunks_v2 MODIFY COLUMN sparse_native SPARSEVECTOR")
         _try_execute(
-            "CREATE VECTOR INDEX ix_kchunks_v2_vector "
-            "ON knowledge_chunks_v2(vector) WITH (distance=cosine, type=hnsw)"
+            "CREATE VECTOR INDEX kcv_vec_native "
+            "ON knowledge_chunks_v2(vector_native) WITH (distance=cosine, type=hnsw)"
         )
         _try_execute(
-            "CREATE SPARSE VECTOR INDEX ix_kchunks_v2_sparse " "ON knowledge_chunks_v2(sparse)"
+            "CREATE VECTOR INDEX kcv_sparse_native "
+            "ON knowledge_chunks_v2(sparse_native) "
+            "WITH (lib=vsag, type=sindi, distance=inner_product)"
         )
 
     op.create_table(
@@ -206,7 +252,10 @@ def upgrade() -> None:
         sa.Column("block_count", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("text", sa.Text(), nullable=False),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
@@ -224,8 +273,8 @@ def downgrade() -> None:
     op.drop_index("ix_kpage_index_v2_doc_page", table_name="knowledge_page_index_v2")
     op.drop_table("knowledge_page_index_v2")
     if not _is_sqlite():
-        op.execute("DROP INDEX ix_kchunks_v2_sparse ON knowledge_chunks_v2")
-        op.execute("DROP INDEX ix_kchunks_v2_vector ON knowledge_chunks_v2")
+        _try_execute("DROP INDEX kcv_sparse_native ON knowledge_chunks_v2")
+        _try_execute("DROP INDEX kcv_vec_native ON knowledge_chunks_v2")
     op.drop_index("ix_kchunks_v2_document_id", table_name="knowledge_chunks_v2")
     op.drop_index("ix_kchunks_v2_doc_section", table_name="knowledge_chunks_v2")
     op.drop_index("ix_kchunks_v2_kb_kind_scheme", table_name="knowledge_chunks_v2")

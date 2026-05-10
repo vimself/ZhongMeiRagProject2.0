@@ -83,7 +83,12 @@ def test_retrieval_debug_fuses_lexical_score() -> None:
     resp = client.post(
         "/api/v2/retrieval/debug",
         headers={"Authorization": f"Bearer {token}"},
-        json={"kb_id": "kb-id", "query": "施工", "k": 5, "filters": {"doc_kind": "plan"}},
+        json={
+            "kb_id": "kb-id",
+            "query": "施工",
+            "k": 5,
+            "filters": {"doc_kind": "plan"},
+        },
     )
     assert resp.status_code == 200
     assert resp.json()["items"][0]["chunk_id"] == "chunk-id"

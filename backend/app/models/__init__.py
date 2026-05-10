@@ -1,4 +1,5 @@
 from app.models.auth import AuditLog, AuthLoginAttempt, LoginRecord, User
+from app.models.chat import ChatMessage, ChatMessageCitation, ChatSession, RagEvalRun
 from app.models.document import (
     Document,
     DocumentAsset,
@@ -14,6 +15,9 @@ from app.models.knowledge_base import KnowledgeBase, KnowledgeBasePermission
 __all__ = [
     "AuditLog",
     "AuthLoginAttempt",
+    "ChatMessage",
+    "ChatMessageCitation",
+    "ChatSession",
     "Document",
     "DocumentAsset",
     "DocumentIngestJob",
@@ -25,5 +29,6 @@ __all__ = [
     "KnowledgeChunkV2",
     "KnowledgePageIndexV2",
     "LoginRecord",
+    "RagEvalRun",
     "User",
 ]

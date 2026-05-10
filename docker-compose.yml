@@ -1,4 +1,4 @@
-services:
+﻿services:
   nginx:
     image: nginx:1.27-alpine
     depends_on:
@@ -18,7 +18,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.api
-    env_file: .env.example
+    env_file: .env
     environment:
       RUN_ALEMBIC: "1"
     ports:
@@ -40,7 +40,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
-    env_file: .env.example
+    env_file: .env
     command: celery -A app.celery_app:celery_app worker -Q default --loglevel=INFO --concurrency=2
     depends_on:
       redis:
@@ -50,7 +50,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
-    env_file: .env.example
+    env_file: .env
     command: celery -A app.celery_app:celery_app worker -Q ingest --loglevel=INFO --concurrency=4
     depends_on:
       redis:
@@ -60,7 +60,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
-    env_file: .env.example
+    env_file: .env
     command: celery -A app.celery_app:celery_app worker -Q rag --loglevel=INFO --concurrency=2
     depends_on:
       redis:
@@ -70,7 +70,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
-    env_file: .env.example
+    env_file: .env
     command: celery -A app.celery_app:celery_app worker -Q plan --loglevel=INFO --concurrency=2
     depends_on:
       redis:
@@ -80,7 +80,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
-    env_file: .env.example
+    env_file: .env
     command: celery -A app.celery_app:celery_app worker -Q docx --loglevel=INFO --concurrency=1
     depends_on:
       redis:
@@ -90,7 +90,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
-    env_file: .env.example
+    env_file: .env
     command: celery -A app.celery_app:celery_app beat --loglevel=INFO
     depends_on:
       redis:
@@ -100,7 +100,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
-    env_file: .env.example
+    env_file: .env
     command: celery -A app.celery_app:celery_app flower --port=5555
     ports:
       - "${FLOWER_PORT:-5555}:5555"

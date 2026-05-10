@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     jwt_refresh_token_days: int = 7
     pdf_token_minutes: int = 5
     redis_url: str = "redis://localhost:6379/0"
-    database_url: str = "mysql+asyncmy://zhongmei:zhongmei@localhost:3306/zhongmei"
+    database_url: str = "mysql+asyncmy://zhongmei:zhongmei@localhost:3306/zhongmei?charset=utf8mb4"
     login_failed_limit: int = 5
     login_failed_window_seconds: int = 900
     admin_seed_username: str = "admin"
@@ -28,8 +28,11 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     dashscope_api_key: SecretStr | None = None
     dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    dashscope_native_base_url: str = "https://dashscope.aliyuncs.com/api/v1"
     dashscope_chat_model: str = "qwen3.6-plus"
+    dashscope_chat_model_fallback: str = "qwen3-turbo"
     dashscope_embedding_model: str = "qwen3-vl-embedding"
+    dashscope_embedding_dimension: int = 1024
     ocr_base_url: str = "http://222.195.4.65:8899"
     ocr_workstation_host: str = "222.195.4.65"
     ocr_callback_base_url: str = "http://127.0.0.1:18000"
@@ -41,6 +44,10 @@ class Settings(BaseSettings):
     embed_batch_size: int = 25
     chunk_tokens: int = 512
     chunk_overlap: int = 64
+    chat_history_limit: int = 50
+    chat_min_score_threshold: float = 0.05
+    chat_topk: int = 6
+    chat_no_hit_message: str = "无法在知识库中找到依据，建议换个问法或先上传相关文档。"
 
 
 @lru_cache

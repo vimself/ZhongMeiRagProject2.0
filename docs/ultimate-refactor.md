@@ -477,7 +477,7 @@ PyMuPDF == 1.24.*             # 生产用：快、稳
 | 知识库 | `knowledge_bases / knowledge_base_permissions` | 角色矩阵 |
 | 文档 | `documents / document_parse_results / document_assets` | doc_kind / scheme_type 标签 |
 | 入库调度 | `document_ingest_jobs / ingest_step_receipts / ingest_callback_receipts` | 幂等 + 死信 |
-| **向量检索** | `knowledge_chunks_v2` | vector VECTOR(1024) + sparse SPARSE_VECTOR + **section_path / section_id / page_start / page_end / bbox / content_type / doc_kind / scheme_type** |
+| **向量检索** | `knowledge_chunks_v2` | vector VECTOR(1024) + sparse SPARSEVECTOR + **section_path / section_id / page_start / page_end / bbox / content_type / doc_kind / scheme_type** |
 | **页级结构化** | `knowledge_page_index_v2` | page_no / section_map / block_count |
 | 会话 | `chat_sessions / chat_messages / chat_message_citations` | 引用落库用于审计 & 复现 |
 | **方案助手** | `plan_templates / plan_template_sections / plan_template_tables` | 模板 + 章节 schema + 表格 schema |

@@ -34,7 +34,7 @@
 | `knowledge_chunks_v2` | 章节感知切片，含 section_path、section_id、页码、向量/稀疏字段 |
 | `knowledge_page_index_v2` | 按页聚合的页面索引 |
 
-SQLite 下 `vector` / `sparse` 使用 JSON。SeekDB 迁移会尝试通过 `op.execute` 转为 `VECTOR(1024)` / `SPARSE_VECTOR` 并创建索引；Stage 6 复验发现当前本地 SeekDB 测试镜像对相关 DDL 支持不完整，因此迁移已改为可降级执行，保留 JSON/fallback 路径以保证服务启动。
+SQLite 下 `vector` / `sparse` 使用 JSON。Stage 7 复核 SeekDB 官方语法后，当前实现改为同时保留 JSON fallback 字段，并在 SeekDB 中启用 `vector_native VECTOR(1024)` / `sparse_native SPARSEVECTOR` 原生列与 HNSW/SINDI 索引。
 
 ### 2.2 服务层
 
@@ -172,7 +172,7 @@ API 写操作记录当前用户；worker 失败使用文档上传者作为 actor
 
 - 实现正式检索服务：向量召回、BM25、RRF、过滤器、权限裁剪。 ✅ 已在 Stage 6 完成
 - 增加 PDF 预览与 bbox 高亮接口。 ✅ 已在 Stage 6 完成
-- 为 `knowledge_chunks_v2` 接入 SeekDB 真实向量查询语法并补压测。✅ Stage 6 已实现原生 SQL 优先 + fallback；当前本地 SeekDB 镜像不支持完整向量/全文 DDL，后续可更换支持版本后复验原生索引性能。
+- 为 `knowledge_chunks_v2` 接入 SeekDB 真实向量查询语法并补压测。✅ Stage 7 已修正为 `VECTOR(1024)` / `SPARSEVECTOR` + HNSW/SINDI，并在当前本地 `seekdb-v1.2.0.0` 镜像中通过原生向量、稀疏和 NGRAM 全文探针；生产前仍需按真实数据规模压测。
 
 ---
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,6 +8,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import Document, KnowledgeChunkV2
+from app.services.rag.vector_utils import (
+    dense_vector_literal,
+    sparse_vector_literal,
+    text_term_weights,
+)
 
 
 @dataclass(frozen=True)
@@ -50,7 +54,7 @@ class Retriever:
                     if query_vector
                     else []
                 )
-                bm25_results = await self._seekdb_bm25_search(kb_id, query, filters, k=k * 2)
+                bm25_results = await self._seekdb_lexical_search(kb_id, query, filters, k=k * 2)
                 candidate_ids = [chunk_id for chunk_id, _ in vector_results + bm25_results]
                 chunks = await self._load_chunks_by_ids(candidate_ids)
             except SQLAlchemyError:
@@ -145,16 +149,35 @@ class Retriever:
         result = await self.db.execute(
             text(
                 f"""
-                SELECT id, 1 - cosine_distance(vector, :query_vector) AS score
+                SELECT id, cosine_similarity(vector_native, :query_vector) AS score
                 FROM knowledge_chunks_v2
-                WHERE {where_sql} AND vector IS NOT NULL
-                ORDER BY cosine_distance(vector, :query_vector) APPROXIMATE
+                WHERE {where_sql} AND vector_native IS NOT NULL
+                ORDER BY cosine_distance(vector_native, :query_vector) APPROXIMATE
                 LIMIT :limit
                 """
             ),
             params,
         )
         return [(str(row.id), float(row.score)) for row in result if row.score is not None]
+
+    async def _seekdb_lexical_search(
+        self,
+        kb_id: str,
+        query: str,
+        filters: dict[str, Any],
+        k: int,
+    ) -> list[tuple[str, float]]:
+        try:
+            bm25_results = await self._seekdb_bm25_search(kb_id, query, filters, k=k)
+        except SQLAlchemyError:
+            bm25_results = []
+        try:
+            sparse_results = await self._seekdb_sparse_search(kb_id, query, filters, k=k)
+        except SQLAlchemyError:
+            sparse_results = []
+        if bm25_results and sparse_results:
+            return self._rrf_fuse(bm25_results, sparse_results, k=k)
+        return bm25_results or sparse_results
 
     async def _seekdb_bm25_search(
         self,
@@ -181,6 +204,33 @@ class Retriever:
         )
         return [(str(row.id), float(row.score)) for row in result if row.score is not None]
 
+    async def _seekdb_sparse_search(
+        self,
+        kb_id: str,
+        query: str,
+        filters: dict[str, Any],
+        k: int,
+    ) -> list[tuple[str, float]]:
+        query_sparse = sparse_vector_literal(text_term_weights(query))
+        if not query_sparse:
+            return []
+        where_sql, params = self._seekdb_filters(kb_id, filters)
+        params["query_sparse"] = query_sparse
+        params["limit"] = k
+        result = await self.db.execute(
+            text(
+                f"""
+                SELECT id, -negative_inner_product(sparse_native, :query_sparse) AS score
+                FROM knowledge_chunks_v2
+                WHERE {where_sql} AND sparse_native IS NOT NULL
+                ORDER BY negative_inner_product(sparse_native, :query_sparse) APPROXIMATE
+                LIMIT :limit
+                """
+            ),
+            params,
+        )
+        return [(str(row.id), float(row.score)) for row in result if row.score is not None]
+
     @staticmethod
     def _seekdb_filters(kb_id: str, filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         clauses = ["knowledge_base_id = :kb_id"]
@@ -197,8 +247,7 @@ class Retriever:
 
     @staticmethod
     def _vector_literal(values: list[float]) -> str:
-        finite_values = [value for value in values if math.isfinite(value)]
-        return "[" + ",".join(f"{value:.8g}" for value in finite_values) + "]"
+        return dense_vector_literal(values)
 
     def _vector_search(
         self,
@@ -229,7 +278,7 @@ class Retriever:
     ) -> list[tuple[str, float]]:
         """SQLite fallback: term frequency + phrase matching."""
         query_lower = query.lower()
-        query_terms = [t for t in query_lower.split() if t]
+        query_terms = list(text_term_weights(query_lower))
         scored: list[tuple[str, float]] = []
         for chunk in chunks:
             content_lower = chunk.content.lower()
@@ -249,16 +298,24 @@ class Retriever:
         rrf_k: int = 60,
     ) -> list[tuple[str, float]]:
         scores: dict[str, float] = {}
+        active_tracks = int(bool(vector_results)) + int(bool(bm25_results))
         for rank, (chunk_id, _) in enumerate(vector_results):
             scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (rrf_k + rank + 1)
         for rank, (chunk_id, _) in enumerate(bm25_results):
             scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (rrf_k + rank + 1)
-        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        normalizer = active_tracks * (1.0 / (rrf_k + 1)) if active_tracks else 1.0
+        ranked = sorted(
+            ((chunk_id, score / normalizer) for chunk_id, score in scores.items()),
+            key=lambda x: x[1],
+            reverse=True,
+        )
         return ranked[:k]
 
     @staticmethod
     def _text_to_simple_vector(text: str) -> list[float]:
         """Very simple bag-of-characters vector for testing fallback."""
+        import math
+
         vec = [0.0] * 256
         for ch in text.lower():
             idx = ord(ch) % 256
@@ -270,6 +327,8 @@ class Retriever:
 
     @staticmethod
     def _cosine_similarity(a: list[float], b: list[float]) -> float:
+        import math
+
         if len(a) != len(b):
             min_len = min(len(a), len(b))
             a = a[:min_len]

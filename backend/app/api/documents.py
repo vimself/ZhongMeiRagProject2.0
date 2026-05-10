@@ -398,7 +398,11 @@ async def receive_ocr_callback(
                     target_type="document",
                     target_id=document.id,
                     request=request,
-                    details={"job_id": job_id, "session_id": session_id, "status": status_value},
+                    details={
+                        "job_id": job_id,
+                        "session_id": session_id,
+                        "status": status_value,
+                    },
                 )
         await db.commit()
     return {"status": "ok"}
@@ -413,7 +417,12 @@ def _validate_upload(file: UploadFile, content: bytes) -> None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件超过大小限制")
     if not content.startswith(b"%PDF-"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件魔数不是 PDF")
-    if file.content_type not in {None, "", "application/pdf", "application/octet-stream"}:
+    if file.content_type not in {
+        None,
+        "",
+        "application/pdf",
+        "application/octet-stream",
+    }:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件 MIME 类型不正确")
 
 
@@ -560,11 +569,18 @@ def _send_ingest_task(*, job_id: str, document_id: str, actor_user_id: str) -> N
     celery_app.send_task(
         "ingest.process",
         queue="ingest",
-        kwargs={"job_id": job_id, "document_id": document_id, "actor_user_id": actor_user_id},
+        kwargs={
+            "job_id": job_id,
+            "document_id": document_id,
+            "actor_user_id": actor_user_id,
+        },
     )
 
 
 async def _query_embedding(query: str) -> list[float] | None:
+    settings = get_settings()
+    if settings.app_env == "test":
+        return None
     try:
         async with DashScopeClient() as client:
             embeddings = await client.embed_batch([query])

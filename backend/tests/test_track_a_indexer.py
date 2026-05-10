@@ -143,6 +143,10 @@ async def test_write_chunks_replaces_existing_rows() -> None:
     assert count == 1
     assert len(rows) == 1
     assert rows[0].content == "内容-0"
+    assert rows[0].vector == [0.1]
+    assert rows[0].vector_native == "[0.1]"
+    assert rows[0].sparse
+    assert rows[0].sparse_native and rows[0].sparse_native.startswith("{")
 
 
 @pytest.mark.asyncio

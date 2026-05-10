@@ -54,7 +54,7 @@
   - 文档标题加载、snippet 构建
 - `RetrievalDebugItem` schema 新增 Stage 7 引用协议字段（`document_title`、`knowledge_base_id`、`section_text`、`bbox`、`snippet`、`preview_url`、`download_url`），均有默认值，向后兼容。
 - 升级 `POST /api/v2/retrieval/debug` 端点，使用 `Retriever.retrieve()` 替代本地 `_debug_score`，并为 `preview_url` / `download_url` 生成短时 PDF token。
-- 新增 Alembic revision `stage_6_pdf_preview_rag`，为 `knowledge_chunks_v2.content` 尝试创建全文索引；当前本地 SeekDB 镜像如不支持对应 DDL，会自动降级到 fallback 检索，不阻断服务启动。
+- 新增 Alembic revision `stage_6_pdf_preview_rag`，为 `knowledge_chunks_v2.content` 尝试创建全文索引；Stage 7 复核后已改为 SeekDB NGRAM FULLTEXT，并保留 fallback 检索以兼容不支持对应 DDL 的环境。
 
 ### 2.4 审计
 
@@ -124,7 +124,7 @@
 ## 5. 剩余问题
 
 - `pdfPreviewUrl` 中 token 通过 URL query 参数传递（pdfjs-dist 需要），安全性通过 5 分钟过期 + 文档级 scope 保证。
-- 当前本地 SeekDB 镜像对 `VECTOR(1024)` / `SPARSE_VECTOR` / 全文索引 DDL 支持不完整，迁移已改为可降级，服务使用 JSON/fallback 检索路径保持可用。后续若更换支持完整向量 DDL 的 SeekDB 版本，可恢复原生索引能力。
+- Stage 7 已确认当前本地 `seekdb-v1.2.0.0` 镜像支持 `VECTOR(1024)`、`SPARSEVECTOR`、HNSW/SINDI 和 NGRAM FULLTEXT；迁移仍保留可降级策略，便于兼容能力较弱的测试镜像或未来部署差异。
 - 前端 PdfViewer 的 bbox 坐标转换按 PDF 坐标系原点左下实现，已通过单元/构建和 Range 链路验证；仍建议在 Stage 7 使用真实 OCR bbox 样本做视觉复核。
 
 ---

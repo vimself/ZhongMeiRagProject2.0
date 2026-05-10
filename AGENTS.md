@@ -34,6 +34,7 @@ origin=https://github.com/vimself/ZhongMeiRagProject2.0.git
 - Stage 4 知识库骨架已完成，进度记录见 `docs/stage-4-knowledge-base-progress.md`。
 - Stage 5 入库链路核心已完成，进度记录见 `docs/stage-5-ingest-progress.md`。
 - Stage 6 文档预览与 RAG 元数据闭环已完成，进度记录见 `docs/stage-6-document-preview-rag-progress.md`。
+- Stage 7 RAG 问答链路已完成，进度记录见 `docs/stage-7-rag-chat-progress.md`。
 - 后端认证入口统一位于 `/api/v2/auth/*`，包含登录、刷新、登出、改密与当前用户查询。
 - 个人中心 API 位于 `/api/v2/user/*`，包含资料读取/更新、头像上传/删除、改密。
 - 管理员 API 位于 `/api/v2/admin/*`，包含用户 CRUD、重置密码、停用、审计日志查询、知识库管理。
@@ -41,7 +42,7 @@ origin=https://github.com/vimself/ZhongMeiRagProject2.0.git
 - 文档入库 API 位于 `/api/v2/knowledge-bases/{kb_id}/documents` 与 `/api/v2/documents/*`，包含 PDF 上传、列表、详情、进度、重试与软停用。
 - 入库链路通过 Celery `ingest` 队列执行，核心步骤为 OCR 上传/轮询、章节解析、章节感知切片、embedding、Track A/B 写入、资产登记和 finalize。
 - OCR 客户端位于 `backend/app/services/ocr/client.py`，兼容 DeepseekOcrApi 新版 `/healthz`、`/queue`、扩展 `/status`、`/assets` 与旧版 markdown/images/base64 端点。
-- `knowledge_chunks_v2` 在本地 SQLite 测试中使用 JSON 存储 `vector`/`sparse`；SeekDB 迁移会尝试启用 `VECTOR(1024)` / `SPARSE_VECTOR` 和索引，如当前本地 SeekDB 镜像不支持对应 DDL，则保留 JSON/fallback 检索路径并继续启动。
+- `knowledge_chunks_v2` 在本地 SQLite 测试中使用 JSON 存储 `vector`/`sparse`；SeekDB 使用 `vector_native VECTOR(1024)` + HNSW、`sparse_native SPARSEVECTOR` + SINDI、`content` + NGRAM FULLTEXT，JSON 字段保留为 fallback。
 - 知识库权限矩阵：admin 完全管理、owner 可编辑删除管理权限、editor 可编辑、viewer 只读。
 - 知识库权限候选用户接口位于 `/api/v2/knowledge-bases/{id}/permission-candidates`，owner/admin 可用；管理员可通过 `/api/v2/admin/knowledge-bases/{id}/permissions` 查看任意知识库权限记录（包括已停用知识库）。
 - 知识库写操作审计 action 包含 `knowledge_base.create`、`knowledge_base.update`、`knowledge_base.disable`、`knowledge_base.permissions.update`，均需记录操作者。
@@ -53,8 +54,17 @@ origin=https://github.com/vimself/ZhongMeiRagProject2.0.git
 - PDF 预览 API 位于 `/api/v2/pdf/*`：`POST /api/v2/pdf/sign` 签发 5 分钟短时 JWT，`GET /api/v2/pdf/preview` 支持 HTTP Range（`200/206/416`）。Token 含 `sub`、`doc`、`kb`、`scope=pdf_preview`，校验用户、文档、KB 权限、文档未停用。
 - PDF 下载 API 位于 `GET /api/v2/documents/{document_id}/download?token=`，复用 PDF 短时 token。
 - 文档资产预览 API 位于 `/api/v2/assets/*`：`POST /api/v2/assets/sign` 签发 5 分钟资产 token，`GET /api/v2/assets/preview` 校验资产、文档、KB 权限后返回文件。
-- RAG 检索服务位于 `backend/app/services/rag/retriever.py`，`Retriever` 类实现 Track A 向量召回 + Track B BM25 召回 + RRF 融合（K=60）。SeekDB 原生 `cosine_distance` / `MATCH ... AGAINST` 优先，SQLite 或当前 SeekDB DDL/查询不支持时使用 Python 余弦相似度和词频打分 fallback。
+- RAG 检索服务位于 `backend/app/services/rag/retriever.py`，`Retriever` 类实现 Track A 向量召回 + Track B BM25/稀疏召回 + RRF 融合（K=60）。SeekDB 原生 `cosine_distance` / `negative_inner_product` / `MATCH ... AGAINST` 优先，SQLite 或当前 SeekDB DDL/查询不支持时使用 Python 余弦相似度和词频打分 fallback。
 - `POST /api/v2/retrieval/debug`（admin 权限）已升级为正式检索冒烟 API，返回 Stage 7 引用协议字段（含短时 `preview_url` 与 `download_url`）。
 - 前端 PDF 查看器基于 `pdfjs-dist`，组件位于 `frontend/src/components/PdfViewer.vue`，支持页码跳转、缩放、bbox 高亮覆层。
 - 文档权限校验共享函数 `require_document_role()` 位于 `backend/app/api/knowledge_base_deps.py`。
 - PDF/资产预览审计 action：`pdf.sign`、`pdf.preview`、`pdf.download`、`asset.sign`、`asset.preview`。
+- Stage 7 聊天 API 位于 `/api/v2/chat/*`：`POST /api/v2/chat/stream` 以 SSE 依次下发 `references` / `content` / `done`（失败时 `error`）；`GET /api/v2/chat/sessions`、`GET /api/v2/chat/sessions/{id}`、`DELETE /api/v2/chat/sessions/{id}` 管理会话。
+- Stage 7 数据库新增 `chat_sessions` / `chat_messages` / `chat_message_citations` / `rag_eval_runs`；引用仅持久化稳定元数据（document_id、chunk_id、section_path、page/bbox、snippet、score），`preview_url` / `download_url` 每次读取会话详情或流式回答都重新签发 5 分钟短时 JWT，**不落库**。
+- Stage 7 RAG graph 位于 `backend/app/services/rag/graph.py`，节点包括 `plan_query`、`retrieve_track_a`、`retrieve_track_b`、`rrf_fusion`、`dedupe_citations`、`should_answer`、`generate_stream`、`rewrite_citations`、`persist`；无命中时返回 `CHAT_NO_HIT_MESSAGE` 兜底；LLM 429 按 `DASHSCOPE_CHAT_MODEL_FALLBACK` 降级到 `qwen3-turbo`。引用协议中 `[cite:i]` 会被统一改写为 `^[n]`。
+- Stage 7 前端聊天入口位于 `/chat`（`frontend/src/views/ChatView.vue`），首页 RAG 问答卡片直达；三栏布局复用 `features/chat/*`（MessageList/Composer/CitationCard/CitationPane/PreviewModal），PreviewModal 左侧复用 Stage 6 `PdfViewer` 定位 `page_start + bbox` 高亮。视觉语言为白色极简工程 RAG 工作台：`#FAFAF9`/`#FFFFFF` 背景、`#E5E7EB` 细边框、主色 `#0F766E`（teal），严禁紫色 AI 渐变与重阴影。
+- DashScope 客户端位于 `backend/app/services/llm/client.py`：`qwen3-vl-embedding` 走 DashScope 原生多模态 embedding endpoint（`DASHSCOPE_NATIVE_BASE_URL`），chat 走 OpenAI 兼容 `/chat/completions` 并只向调用方返回 SSE delta 文本。
+- Docker Compose 后端服务通过 `env_file: .env` 读取真实本地配置，不再读取 `.env.example`。
+- Stage 7 新增依赖：后端 `sse-starlette (>=2.1,<3)`；前端 `@microsoft/fetch-event-source ^2.0.1`、`markdown-it ^14.1.0`、`@types/markdown-it ^14.1.2`、`dompurify`。
+- Stage 7 新增环境变量：`DASHSCOPE_NATIVE_BASE_URL`、`DASHSCOPE_CHAT_MODEL_FALLBACK`、`DASHSCOPE_EMBEDDING_DIMENSION`、`CHAT_HISTORY_LIMIT`、`CHAT_MIN_SCORE_THRESHOLD`、`CHAT_TOPK`、`CHAT_NO_HIT_MESSAGE`。
+- Stage 7 离线评测脚本 `eval/ragas_runbook.py`，金标数据 `eval/golden_cases.json`（20 条中文工程问题），结果写入 `rag_eval_runs`；ragas 指标为可选依赖，无外部 LLM key 时自动降级到启发式指标。

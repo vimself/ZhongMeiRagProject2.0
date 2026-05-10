@@ -28,7 +28,7 @@ const passwordDialogVisible = ref(false)
 
 const cards = [
   { title: '知识库', description: '文档入库、检索与引用预览', icon: Tickets, route: '/knowledge' },
-  { title: 'RAG 问答', description: 'SSE 流式回答与可溯源引用', icon: Service, route: '' },
+  { title: 'RAG 问答', description: 'SSE 流式回答与可溯源引用', icon: Service, route: '/chat' },
   { title: '方案编制', description: '模板、参数、章节生成工作台', icon: Monitor, route: '' },
 ]
 
