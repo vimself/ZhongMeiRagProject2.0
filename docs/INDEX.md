@@ -10,3 +10,4 @@
 | [stage-5-ingest-progress.md](stage-5-ingest-progress.md) | Stage 5 · 入库链路核心 进度报告 |
 | [stage-6-document-preview-rag-progress.md](stage-6-document-preview-rag-progress.md) | Stage 6 · 文档预览与 RAG 元数据闭环 进度报告 |
 | [stage-7-rag-chat-progress.md](stage-7-rag-chat-progress.md) | Stage 7 · RAG 问答链路 进度报告 |
+| [stage-8-search-dashboard-progress.md](stage-8-search-dashboard-progress.md) | Stage 8 · 搜索与仪表板 进度报告 |

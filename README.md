@@ -1,12 +1,10 @@
 # ZhongMei RAG Project v2.0
 
-中煤 RAG v2.0 是一个工程文档知识库与 RAG 问答系统。当前已完成 Stage 7：
+中煤 RAG v2.0 是一个工程文档知识库与 RAG 问答系统。
 
 - 后端：FastAPI、SeekDB、Redis、Celery、DashScope LLM/Embedding、DeepSeek-OCR 工作站接入。
 - 前端：Vue 3、TypeScript、Vite、Pinia、Element Plus，包含知识库、文档入库、PDF 预览、RAG 问答工作台。
 - 基础设施：Docker Compose 启动 API、Worker、Redis、SeekDB、Nginx、Flower、Prometheus、Grafana。
-
-这份 README 按“小白也能跑起来”的方式写：照着做即可完成本地启动、创建管理员账号、打开浏览器登录测试。
 
 ## 1. 准备环境
 

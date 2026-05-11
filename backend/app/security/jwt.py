@@ -106,6 +106,17 @@ def issue_asset_token(
     )
 
 
+def issue_search_export_token(subject: str, job_id: str) -> IssuedToken:
+    settings = get_settings()
+    return _encode_token(
+        subject=subject,
+        token_type="search_export",
+        expires_delta=timedelta(minutes=settings.pdf_token_minutes),
+        job=job_id,
+        scope="search_export",
+    )
+
+
 def decode_token(token: str, expected_type: str) -> TokenData:
     settings = get_settings()
     credentials_error = HTTPException(

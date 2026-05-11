@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     chat_min_score_threshold: float = 0.05
     chat_topk: int = 6
     chat_no_hit_message: str = "无法在知识库中找到依据，建议换个问法或先上传相关文档。"
+    export_dir: str = "uploads/exports"
 
 
 @lru_cache

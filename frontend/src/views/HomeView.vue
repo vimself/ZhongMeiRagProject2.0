@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import {
   Collection,
+  DataAnalysis,
   Key,
   Monitor,
+  Search,
   Setting,
   Service,
   SwitchButton,
@@ -29,7 +31,17 @@ const passwordDialogVisible = ref(false)
 const cards = [
   { title: '知识库', description: '文档入库、检索与引用预览', icon: Tickets, route: '/knowledge' },
   { title: 'RAG 问答', description: 'SSE 流式回答与可溯源引用', icon: Service, route: '/chat' },
+  { title: '知识检索', description: '跨知识库全文检索与导出', icon: Search, route: '/search' },
   { title: '方案编制', description: '模板、参数、章节生成工作台', icon: Monitor, route: '' },
+]
+
+const adminCards = [
+  {
+    title: '系统仪表盘',
+    description: '系统状态与数据统计',
+    icon: DataAnalysis,
+    route: '/admin/dashboard',
+  },
 ]
 
 async function logout() {
@@ -48,7 +60,7 @@ async function logout() {
       <div class="account">
         <div class="identity">
           <span>{{ auth.user?.display_name }}</span>
-          <ElTag type="success" effect="dark">Stage 5</ElTag>
+          <ElTag type="success" effect="dark">Stage 8</ElTag>
         </div>
         <div class="actions">
           <ElButton :icon="UserIcon" @click="router.push('/profile')">个人中心</ElButton>
@@ -75,6 +87,21 @@ async function logout() {
         class="module"
         :class="{ clickable: card.route }"
         @click="card.route ? router.push(card.route) : undefined"
+      >
+        <ElIcon :size="24">
+          <component :is="card.icon" />
+        </ElIcon>
+        <div>
+          <h2>{{ card.title }}</h2>
+          <p>{{ card.description }}</p>
+        </div>
+      </article>
+      <article
+        v-for="card in adminCards"
+        v-show="auth.isAdmin"
+        :key="card.title"
+        class="module clickable"
+        @click="router.push(card.route)"
       >
         <ElIcon :size="24">
           <component :is="card.icon" />

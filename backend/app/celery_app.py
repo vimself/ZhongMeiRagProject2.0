@@ -23,8 +23,9 @@ celery_app.conf.update(
         "rag.*": {"queue": "rag"},
         "plan.*": {"queue": "plan"},
         "docx.*": {"queue": "docx"},
+        "search.*": {"queue": "default"},
     },
-    imports=("app.tasks.ingest",),
+    imports=("app.tasks.ingest", "app.tasks.search_export"),
     task_annotations={
         "ingest.embed_batch": {"rate_limit": "10/s"},
         "ingest.process": {"rate_limit": None},

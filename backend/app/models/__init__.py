@@ -11,6 +11,7 @@ from app.models.document import (
     KnowledgePageIndexV2,
 )
 from app.models.knowledge_base import KnowledgeBase, KnowledgeBasePermission
+from app.models.search_export import SearchExportJob
 
 __all__ = [
     "AuditLog",
@@ -30,5 +31,6 @@ __all__ = [
     "KnowledgePageIndexV2",
     "LoginRecord",
     "RagEvalRun",
+    "SearchExportJob",
     "User",
 ]

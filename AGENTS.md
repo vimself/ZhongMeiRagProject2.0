@@ -35,6 +35,7 @@ origin=https://github.com/vimself/ZhongMeiRagProject2.0.git
 - Stage 5 入库链路核心已完成，进度记录见 `docs/stage-5-ingest-progress.md`。
 - Stage 6 文档预览与 RAG 元数据闭环已完成，进度记录见 `docs/stage-6-document-preview-rag-progress.md`。
 - Stage 7 RAG 问答链路已完成，进度记录见 `docs/stage-7-rag-chat-progress.md`。
+- Stage 8 搜索与仪表板已完成，进度记录见 `docs/stage-8-search-dashboard-progress.md`。
 - 后端认证入口统一位于 `/api/v2/auth/*`，包含登录、刷新、登出、改密与当前用户查询。
 - 个人中心 API 位于 `/api/v2/user/*`，包含资料读取/更新、头像上传/删除、改密。
 - 管理员 API 位于 `/api/v2/admin/*`，包含用户 CRUD、重置密码、停用、审计日志查询、知识库管理。
@@ -67,4 +68,14 @@ origin=https://github.com/vimself/ZhongMeiRagProject2.0.git
 - Docker Compose 后端服务通过 `env_file: .env` 读取真实本地配置，不再读取 `.env.example`。
 - Stage 7 新增依赖：后端 `sse-starlette (>=2.1,<3)`；前端 `@microsoft/fetch-event-source ^2.0.1`、`markdown-it ^14.1.0`、`@types/markdown-it ^14.1.2`、`dompurify`。
 - Stage 7 新增环境变量：`DASHSCOPE_NATIVE_BASE_URL`、`DASHSCOPE_CHAT_MODEL_FALLBACK`、`DASHSCOPE_EMBEDDING_DIMENSION`、`CHAT_HISTORY_LIMIT`、`CHAT_MIN_SCORE_THRESHOLD`、`CHAT_TOPK`、`CHAT_NO_HIT_MESSAGE`。
+- Stage 8 搜索 API 位于 `/api/v2/search/*`：`POST /api/v2/search/documents`（全库搜索）、`GET /api/v2/search/hot-keywords`（热词聚合）、`GET /api/v2/search/doc-types`（文档类型聚合）、`POST /api/v2/search/export`（异步导出 ZIP）、`GET /api/v2/search/export/{job_id}`（导出状态轮询）、`GET /api/v2/search/export/{job_id}/download`（导出文件下载）。搜索结果包含 Stage 7 引用协议全部字段，preview/download token 每次请求重新签发，并支持 `doc_kind`、`scheme_type`、`content_type`、日期范围与排序筛选。
+- Stage 8 仪表板 API 位于 `/api/v2/dashboard/*`：`GET /api/v2/dashboard/stats`（真实统计聚合）、`GET /api/v2/dashboard/system-status`（SeekDB/Redis/DashScope 探活）。仅 admin 可访问。Redis 断开立即返回 down；DashScope 无 key 返回 not_configured，配置 key 时通过 `/models` 做真实探活。
+- Stage 8 搜索服务 `SearchService`（`backend/app/services/rag/search_service.py`）复用 `Retriever`（Track A/B + RRF），跨知识库搜索按可访问 KB 串行聚合，避免同一 SQLAlchemy `AsyncSession` 并发使用。热词使用 `text_term_weights()` 分词。
+- Stage 8 导出 Celery 任务 `search.export_generate`（`backend/app/tasks/search_export.py`），生成 JSON/CSV + metadata ZIP 包，存储在 `uploads/exports/`；导出状态返回 5 分钟短时 `search_export` token 下载 URL，下载时校验用户与 job 范围。
+- Stage 8 前端搜索入口位于 `/search`（`frontend/src/views/SearchView.vue`），支持筛选栏、热词/类型快捷筛选、结果卡片、分页、导出 ZIP，点击结果复用 Stage 6/7 `PreviewModal` 进行 PDF 预览 + bbox 高亮。
+- Stage 8 前端仪表板入口位于 `/admin/dashboard`（`frontend/src/views/AdminDashboardView.vue`），统计概览卡片、7 天趋势折线图（ECharts）、文档类型饼图、系统状态灯、最近活动表格。
+- Stage 8 首页新增「知识检索」卡片（所有用户可见）和「系统仪表盘」卡片（仅 admin 可见），Stage 标识更新为 Stage 8。
+- Stage 8 审计 action：`search.documents`、`search.export`、`dashboard.view`、`dashboard.system_status`。
+- Stage 8 新增依赖：前端 `echarts` ^5.5.0、`vue-echarts` ^7.0.0。
+- Stage 8 新增环境变量：`EXPORT_DIR`（默认 `uploads/exports`）。
 - Stage 7 离线评测脚本 `eval/ragas_runbook.py`，金标数据 `eval/golden_cases.json`（20 条中文工程问题），结果写入 `rag_eval_runs`；ragas 指标为可选依赖，无外部 LLM key 时自动降级到启发式指标。

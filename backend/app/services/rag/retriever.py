@@ -107,6 +107,9 @@ class Retriever:
             query = query.where(KnowledgeChunkV2.doc_kind == doc_kind)
         if isinstance(scheme_type, str) and scheme_type:
             query = query.where(KnowledgeChunkV2.scheme_type == scheme_type)
+        content_type = filters.get("content_type")
+        if isinstance(content_type, str) and content_type:
+            query = query.where(KnowledgeChunkV2.content_type == content_type)
         query = query.limit(5000)
         result = await self.db.execute(query)
         return list(result.scalars().all())
@@ -243,6 +246,10 @@ class Retriever:
         if isinstance(scheme_type, str) and scheme_type:
             clauses.append("scheme_type = :scheme_type")
             params["scheme_type"] = scheme_type
+        content_type = filters.get("content_type")
+        if isinstance(content_type, str) and content_type:
+            clauses.append("content_type = :content_type")
+            params["content_type"] = content_type
         return " AND ".join(clauses), params
 
     @staticmethod
