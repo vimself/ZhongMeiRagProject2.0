@@ -16,10 +16,12 @@ from app.models.document import (
     DocumentIngestJob,
     IngestCallbackReceipt,
     IngestStepReceipt,
+    KnowledgeChunkV2,
 )
 from app.models.knowledge_base import KnowledgeBase, KnowledgeBasePermission
 from app.security.login_limiter import login_failure_limiter
 from app.security.password import hash_password
+from app.services.rag.retriever import Retriever
 
 
 @pytest.fixture(autouse=True)
@@ -255,6 +257,50 @@ def test_disable_document_soft_deletes() -> None:
     resp = client.delete("/api/v2/documents/doc-id", headers=_auth(token))
     assert resp.status_code == 200
     assert resp.json()["status"] == "disabled"
+
+
+def test_disabled_document_is_not_retrieved() -> None:
+    _seed()
+    _seed_document(status="disabled")
+
+    async def _retrieve() -> int:
+        async with AsyncSessionLocal() as session:
+            session.add(
+                KnowledgeChunkV2(
+                    knowledge_base_id="kb-id",
+                    document_id="doc-id",
+                    chunk_index=0,
+                    content="塔吊基础专项施工方案",
+                    section_path=["1"],
+                    section_id="1",
+                    doc_kind="plan",
+                    tokens=8,
+                    sha256="chunk-sha",
+                )
+            )
+            await session.commit()
+            results = await Retriever(session).retrieve(kb_id="kb-id", query="塔吊基础")
+            return len(results)
+
+    assert asyncio.run(_retrieve()) == 0
+
+
+def test_document_in_deleted_kb_is_not_accessible() -> None:
+    _seed()
+    _seed_document(status="ready")
+
+    async def _disable_kb() -> None:
+        async with AsyncSessionLocal() as session:
+            kb = await session.get(KnowledgeBase, "kb-id")
+            assert kb is not None
+            kb.is_active = False
+            await session.commit()
+
+    asyncio.run(_disable_kb())
+
+    client, token = _client_and_token()
+    resp = client.get("/api/v2/documents/doc-id", headers=_auth(token))
+    assert resp.status_code == 404
 
 
 def test_other_user_cannot_access_document() -> None:

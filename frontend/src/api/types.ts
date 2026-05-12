@@ -86,8 +86,14 @@ export interface KnowledgeBaseOut {
   name: string
   description: string
   creator_id: string | null
+  creator_username: string
+  creator_name: string
   is_active: boolean
   my_role: string | null
+  document_count: number
+  active_document_count: number
+  permission_count: number
+  deleted_at: string | null
   created_at: string
   updated_at: string
 }

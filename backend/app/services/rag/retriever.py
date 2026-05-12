@@ -100,7 +100,14 @@ class Retriever:
         return results
 
     async def _load_chunks(self, kb_id: str, filters: dict[str, Any]) -> list[KnowledgeChunkV2]:
-        query = select(KnowledgeChunkV2).where(KnowledgeChunkV2.knowledge_base_id == kb_id)
+        query = (
+            select(KnowledgeChunkV2)
+            .join(Document, Document.id == KnowledgeChunkV2.document_id)
+            .where(
+                KnowledgeChunkV2.knowledge_base_id == kb_id,
+                Document.status != "disabled",
+            )
+        )
         doc_kind = filters.get("doc_kind")
         scheme_type = filters.get("scheme_type")
         if isinstance(doc_kind, str) and doc_kind:
@@ -119,7 +126,9 @@ class Retriever:
         if not unique_ids:
             return []
         result = await self.db.execute(
-            select(KnowledgeChunkV2).where(KnowledgeChunkV2.id.in_(unique_ids))
+            select(KnowledgeChunkV2)
+            .join(Document, Document.id == KnowledgeChunkV2.document_id)
+            .where(KnowledgeChunkV2.id.in_(unique_ids), Document.status != "disabled")
         )
         rows = list(result.scalars().all())
         row_map = {row.id: row for row in rows}
@@ -152,10 +161,11 @@ class Retriever:
         result = await self.db.execute(
             text(
                 f"""
-                SELECT id, cosine_similarity(vector_native, :query_vector) AS score
-                FROM knowledge_chunks_v2
-                WHERE {where_sql} AND vector_native IS NOT NULL
-                ORDER BY cosine_distance(vector_native, :query_vector) APPROXIMATE
+                SELECT c.id AS id, cosine_similarity(c.vector_native, :query_vector) AS score
+                FROM knowledge_chunks_v2 c
+                JOIN documents d ON d.id = c.document_id
+                WHERE {where_sql} AND c.vector_native IS NOT NULL
+                ORDER BY cosine_distance(c.vector_native, :query_vector) APPROXIMATE
                 LIMIT :limit
                 """
             ),
@@ -195,10 +205,12 @@ class Retriever:
         result = await self.db.execute(
             text(
                 f"""
-                SELECT id, MATCH(content) AGAINST(:query_text IN NATURAL LANGUAGE MODE) AS score
-                FROM knowledge_chunks_v2
+                SELECT c.id AS id,
+                       MATCH(c.content) AGAINST(:query_text IN NATURAL LANGUAGE MODE) AS score
+                FROM knowledge_chunks_v2 c
+                JOIN documents d ON d.id = c.document_id
                 WHERE {where_sql}
-                  AND MATCH(content) AGAINST(:query_text IN NATURAL LANGUAGE MODE)
+                  AND MATCH(c.content) AGAINST(:query_text IN NATURAL LANGUAGE MODE)
                 ORDER BY score DESC
                 LIMIT :limit
                 """
@@ -223,10 +235,12 @@ class Retriever:
         result = await self.db.execute(
             text(
                 f"""
-                SELECT id, -negative_inner_product(sparse_native, :query_sparse) AS score
-                FROM knowledge_chunks_v2
-                WHERE {where_sql} AND sparse_native IS NOT NULL
-                ORDER BY negative_inner_product(sparse_native, :query_sparse) APPROXIMATE
+                SELECT c.id AS id,
+                       -negative_inner_product(c.sparse_native, :query_sparse) AS score
+                FROM knowledge_chunks_v2 c
+                JOIN documents d ON d.id = c.document_id
+                WHERE {where_sql} AND c.sparse_native IS NOT NULL
+                ORDER BY negative_inner_product(c.sparse_native, :query_sparse) APPROXIMATE
                 LIMIT :limit
                 """
             ),
@@ -236,19 +250,19 @@ class Retriever:
 
     @staticmethod
     def _seekdb_filters(kb_id: str, filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-        clauses = ["knowledge_base_id = :kb_id"]
+        clauses = ["c.knowledge_base_id = :kb_id", "d.status != 'disabled'"]
         params: dict[str, Any] = {"kb_id": kb_id}
         doc_kind = filters.get("doc_kind")
         scheme_type = filters.get("scheme_type")
         if isinstance(doc_kind, str) and doc_kind:
-            clauses.append("doc_kind = :doc_kind")
+            clauses.append("c.doc_kind = :doc_kind")
             params["doc_kind"] = doc_kind
         if isinstance(scheme_type, str) and scheme_type:
-            clauses.append("scheme_type = :scheme_type")
+            clauses.append("c.scheme_type = :scheme_type")
             params["scheme_type"] = scheme_type
         content_type = filters.get("content_type")
         if isinstance(content_type, str) and content_type:
-            clauses.append("content_type = :content_type")
+            clauses.append("c.content_type = :content_type")
             params["content_type"] = content_type
         return " AND ".join(clauses), params
 

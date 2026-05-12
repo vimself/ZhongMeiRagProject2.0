@@ -323,10 +323,10 @@ onMounted(loadUsers)
         <div class="toolbar-filters">
           <ElInput
             v-model="search"
+            class="user-search"
             placeholder="搜索用户名或展示名"
             clearable
             :prefix-icon="Search"
-            style="width: 240px"
             @keyup.enter="handleSearch"
             @clear="handleSearch"
           />
@@ -561,6 +561,11 @@ onMounted(loadUsers)
   padding: 16px 20px;
 }
 
+.toolbar-card {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
 .toolbar {
   display: flex;
   align-items: center;
@@ -573,6 +578,10 @@ onMounted(loadUsers)
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.user-search {
+  width: 260px;
 }
 
 .toolbar-actions {
@@ -678,6 +687,10 @@ onMounted(loadUsers)
 
   .toolbar-filters {
     flex-direction: column;
+  }
+
+  .user-search {
+    width: 100%;
   }
 
   .toolbar-actions {

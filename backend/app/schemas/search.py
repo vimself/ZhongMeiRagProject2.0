@@ -11,7 +11,6 @@ class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1024)
     kb_id: str | None = None
     doc_kind: str | None = None
-    scheme_type: str | None = None
     content_type: str | None = None
     date_from: str | None = None
     date_to: str | None = None
@@ -65,14 +64,8 @@ class DocTypeCount(BaseModel):
     count: int
 
 
-class SchemeTypeCount(BaseModel):
-    scheme_type: str
-    count: int
-
-
 class DocTypesResponse(BaseModel):
     doc_kinds: list[DocTypeCount]
-    scheme_types: list[SchemeTypeCount]
 
 
 # --- Export ---
@@ -82,7 +75,6 @@ class ExportRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1024)
     kb_id: str | None = None
     doc_kind: str | None = None
-    scheme_type: str | None = None
     content_type: str | None = None
     date_from: str | None = None
     date_to: str | None = None

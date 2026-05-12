@@ -17,6 +17,8 @@ export interface LocalChatMessage extends Omit<ChatMessageDTO, 'citations'> {
   status: 'streaming' | 'done' | 'error'
   /** 流式过程中的错误信息 */
   error?: string | null
+  reasoningContent?: string
+  progressText?: string
 }
 
 interface ChatStoreState {
@@ -39,6 +41,21 @@ function now(): string {
 
 function tempId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function isNoEvidenceAnswer(content: string): boolean {
+  const normalized = content.replace(/\s+/g, '')
+  return (
+    normalized.includes('无法在知识库中找到依据') ||
+    normalized.includes('未在知识库中找到依据') ||
+    normalized.includes('没有在知识库中找到依据')
+  )
+}
+
+function shouldExposeCitations(message: ChatMessageDTO | LocalChatMessage): boolean {
+  if (message.role !== 'assistant') return false
+  if (message.finish_reason === 'no_hit') return false
+  return !isNoEvidenceAnswer(message.content)
 }
 
 export const useChatStore = defineStore('chat', {
@@ -76,11 +93,16 @@ export const useChatStore = defineStore('chat', {
         const resp = await getChatSession(sessionId)
         this.activeSessionId = sessionId
         this.activeKbId = resp.data.knowledge_base_id ?? this.activeKbId
-        this.messages = resp.data.messages.map((m) => ({
-          ...m,
-          citations: m.citations ?? [],
-          status: 'done',
-        }))
+        this.messages = resp.data.messages.map((m) => {
+          const citations = shouldExposeCitations(m) ? (m.citations ?? []) : []
+          return {
+            ...m,
+            citations,
+            status: 'done',
+            reasoningContent: '',
+            progressText: '',
+          }
+        })
         // 预填 latestReferences 为最新 assistant 消息的引用（便于右侧面板）
         const lastAssistant = [...this.messages].reverse().find((m) => m.role === 'assistant')
         this.latestReferences = lastAssistant?.citations ?? []
@@ -133,8 +155,17 @@ export const useChatStore = defineStore('chat', {
         created_at: now(),
         citations: [],
         status: 'streaming',
+        reasoningContent: '',
+        progressText: '正在连接问答服务',
       }
       this.messages.push(userMsg, assistantMsg)
+      this.latestReferences = []
+      const assistantId = assistantMsg.id
+      let pendingReferences: ChatCitation[] = []
+      const updateAssistant = (updater: (msg: LocalChatMessage) => void) => {
+        const target = this.messages.find((m) => m.id === assistantId)
+        if (target) updater(target)
+      }
       this.streaming = true
       try {
         await streamChat(
@@ -146,30 +177,64 @@ export const useChatStore = defineStore('chat', {
           },
           {
             signal: abort.signal,
+            onStatus: (payload) => {
+              updateAssistant((msg) => {
+                msg.progressText = payload.message
+              })
+            },
             onReferences: (payload) => {
               this.activeSessionId = payload.session_id
-              this.latestReferences = payload.references
-              assistantMsg.citations = payload.references
+              pendingReferences = payload.references
+            },
+            onReasoning: (delta) => {
+              updateAssistant((msg) => {
+                msg.reasoningContent = `${msg.reasoningContent ?? ''}${delta}`
+              })
             },
             onContent: (delta) => {
-              assistantMsg.content += delta
+              updateAssistant((msg) => {
+                msg.content += delta
+              })
             },
             onDone: (payload: ChatStreamDoneEvent) => {
-              assistantMsg.finish_reason = payload.finish_reason
-              assistantMsg.model = payload.model
-              assistantMsg.status = 'done'
+              const target = this.messages.find((m) => m.id === assistantId)
+              const shouldShowReferences =
+                pendingReferences.length > 0 &&
+                shouldExposeCitations({
+                  ...(target ?? assistantMsg),
+                  content: target?.content ?? '',
+                  finish_reason: payload.finish_reason,
+                  citations: pendingReferences,
+                })
+              updateAssistant((msg) => {
+                msg.finish_reason = payload.finish_reason
+                msg.model = payload.model
+                msg.status = 'done'
+                msg.progressText = ''
+                msg.citations = shouldShowReferences ? pendingReferences : []
+              })
+              this.latestReferences = shouldShowReferences ? pendingReferences : []
             },
             onError: (message) => {
-              assistantMsg.status = 'error'
-              assistantMsg.error = message
+              updateAssistant((msg) => {
+                msg.status = 'error'
+                msg.error = message
+                msg.citations = []
+              })
+              this.latestReferences = []
               this.error = message
             },
           },
         )
       } catch (err) {
-        assistantMsg.status = 'error'
-        assistantMsg.error = (err as Error).message || '网络错误'
-        this.error = assistantMsg.error
+        const message = (err as Error).message || '网络错误'
+        updateAssistant((msg) => {
+          msg.status = 'error'
+          msg.error = message
+          msg.citations = []
+        })
+        this.latestReferences = []
+        this.error = message
       } finally {
         this.streaming = false
         this.abortController = null

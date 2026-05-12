@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import _record_audit
@@ -16,6 +16,7 @@ from app.api.knowledge_base_deps import (
 )
 from app.db.session import get_db_session
 from app.models.auth import User
+from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase, KnowledgeBasePermission
 from app.schemas.knowledge_base import (
     KnowledgeBaseCreate,
@@ -32,14 +33,28 @@ DbSession = Annotated[AsyncSession, Depends(get_db_session)]
 CurrentUser = Annotated[User, Depends(current_user)]
 
 
-def _kb_out(kb: KnowledgeBase, my_role: str | None = None) -> KnowledgeBaseOut:
+def _kb_out(
+    kb: KnowledgeBase,
+    my_role: str | None = None,
+    creator_username: str = "",
+    creator_name: str = "",
+    document_count: int = 0,
+    active_document_count: int = 0,
+    permission_count: int = 0,
+) -> KnowledgeBaseOut:
     return KnowledgeBaseOut(
         id=kb.id,
         name=kb.name,
         description=kb.description,
         creator_id=kb.creator_id,
+        creator_username=creator_username,
+        creator_name=creator_name,
         is_active=kb.is_active,
         my_role=my_role,
+        document_count=document_count,
+        active_document_count=active_document_count,
+        permission_count=permission_count,
+        deleted_at=kb.updated_at.isoformat() if not kb.is_active else None,
         created_at=kb.created_at.isoformat(),
         updated_at=kb.updated_at.isoformat(),
     )
@@ -73,6 +88,59 @@ async def _users_map_for_permissions(
     return {user.id: (user.username, user.display_name) for user in user_rows}
 
 
+async def _user_identities_for_users(
+    db: AsyncSession,
+    user_ids: list[str],
+) -> dict[str, tuple[str, str]]:
+    compact_ids = [user_id for user_id in dict.fromkeys(user_ids) if user_id]
+    if not compact_ids:
+        return {}
+    user_rows = (await db.execute(select(User).where(User.id.in_(compact_ids)))).scalars().all()
+    return {user.id: (user.username, user.display_name) for user in user_rows}
+
+
+async def _creator_identity_for_kb(
+    db: AsyncSession,
+    kb: KnowledgeBase,
+) -> tuple[str, str]:
+    creator_identities = await _user_identities_for_users(
+        db,
+        [kb.creator_id] if kb.creator_id else [],
+    )
+    return creator_identities.get(kb.creator_id or "", ("", ""))
+
+
+async def _admin_kb_archive_counts(
+    db: AsyncSession,
+    kb_ids: list[str],
+) -> tuple[dict[str, tuple[int, int]], dict[str, int]]:
+    if not kb_ids:
+        return {}, {}
+    doc_rows = (
+        await db.execute(
+            select(
+                Document.knowledge_base_id,
+                func.count(Document.id),
+                func.sum(case((Document.status != "disabled", 1), else_=0)),
+            )
+            .where(Document.knowledge_base_id.in_(kb_ids))
+            .group_by(Document.knowledge_base_id)
+        )
+    ).all()
+    permission_rows = (
+        await db.execute(
+            select(
+                KnowledgeBasePermission.knowledge_base_id, func.count(KnowledgeBasePermission.id)
+            )
+            .where(KnowledgeBasePermission.knowledge_base_id.in_(kb_ids))
+            .group_by(KnowledgeBasePermission.knowledge_base_id)
+        )
+    ).all()
+    document_counts = {str(row[0]): (int(row[1] or 0), int(row[2] or 0)) for row in doc_rows}
+    permission_counts = {str(row[0]): int(row[1] or 0) for row in permission_rows}
+    return document_counts, permission_counts
+
+
 async def _load_permissions(
     db: AsyncSession,
     knowledge_base_id: str,
@@ -88,6 +156,90 @@ async def _load_permissions(
         .scalars()
         .all()
     )
+
+
+async def _permission_candidates(
+    db: AsyncSession,
+    search: str = "",
+) -> list[PermissionUserOut]:
+    query = select(User).where(User.is_active == True)  # noqa: E712
+    if search:
+        pattern = f"%{search}%"
+        query = query.where(User.username.ilike(pattern) | User.display_name.ilike(pattern))
+    query = query.order_by(User.created_at.desc()).limit(500)
+    users = (await db.execute(query)).scalars().all()
+    return [
+        PermissionUserOut(id=user.id, username=user.username, display_name=user.display_name)
+        for user in users
+    ]
+
+
+async def _apply_permission_update(
+    kb: KnowledgeBase,
+    request: Request,
+    body: PermissionUpdateRequest,
+    user: User,
+    db: AsyncSession,
+) -> list[PermissionOut]:
+    incoming_user_ids = [permission.user_id for permission in body.permissions]
+    if len(set(incoming_user_ids)) != len(incoming_user_ids):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="权限列表中存在重复用户",
+        )
+
+    if incoming_user_ids:
+        existing_users = (
+            await db.execute(select(User.id).where(User.id.in_(incoming_user_ids)))
+        ).scalars()
+        missing_user_ids = set(incoming_user_ids) - set(existing_users.all())
+        if missing_user_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="权限列表中存在不存在的用户",
+            )
+
+    existing_rows = await _load_permissions(db, kb.id)
+    existing_map: dict[str, KnowledgeBasePermission] = {r.user_id: r for r in existing_rows}
+
+    incoming_user_id_set = set(incoming_user_ids)
+    incoming_owner_ids = {p.user_id for p in body.permissions if p.role == "owner"}
+    if not incoming_owner_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="不能移除最后一个 owner",
+        )
+
+    for item in body.permissions:
+        if item.user_id in existing_map:
+            existing_map[item.user_id].role = item.role
+        else:
+            db.add(
+                KnowledgeBasePermission(
+                    knowledge_base_id=kb.id,
+                    user_id=item.user_id,
+                    role=item.role,
+                )
+            )
+
+    for user_id, perm in existing_map.items():
+        if user_id not in incoming_user_id_set:
+            await db.delete(perm)
+
+    await _record_audit(
+        db,
+        actor_user_id=user.id,
+        action="knowledge_base.permissions.update",
+        target_type="knowledge_base",
+        target_id=kb.id,
+        request=request,
+        details={"user_count": len(body.permissions)},
+    )
+    await db.commit()
+
+    rows = await _load_permissions(db, kb.id)
+    users_map = await _users_map_for_permissions(db, rows)
+    return [_permission_out(row, users_map) for row in rows]
 
 
 @router.get("", response_model=KnowledgeBaseListResponse)
@@ -138,6 +290,10 @@ async def list_knowledge_bases(
     )
     result = await db.execute(base_query)
     kbs = list(result.scalars().all())
+    creator_identities = await _user_identities_for_users(
+        db,
+        [kb.creator_id for kb in kbs if kb.creator_id],
+    )
 
     # Attach my_role for each KB
     items: list[KnowledgeBaseOut] = []
@@ -146,7 +302,15 @@ async def list_knowledge_bases(
             my_role: str | None = "admin"
         else:
             my_role = await _get_user_kb_role(db, user.id, kb.id)
-        items.append(_kb_out(kb, my_role=my_role))
+        creator_username, creator_name = creator_identities.get(kb.creator_id or "", ("", ""))
+        items.append(
+            _kb_out(
+                kb,
+                my_role=my_role,
+                creator_username=creator_username,
+                creator_name=creator_name,
+            )
+        )
 
     return KnowledgeBaseListResponse(
         items=items,
@@ -163,6 +327,11 @@ async def create_knowledge_base(
     user: CurrentUser,
     db: DbSession,
 ) -> KnowledgeBaseOut:
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="只有管理员可以创建知识库"
+        )
+
     kb = KnowledgeBase(
         name=body.name.strip(),
         description=body.description.strip(),
@@ -190,15 +359,27 @@ async def create_knowledge_base(
     )
     await db.commit()
     await db.refresh(kb)
-    return _kb_out(kb, my_role="owner")
+    return _kb_out(
+        kb,
+        my_role="admin",
+        creator_username=user.username,
+        creator_name=user.display_name,
+    )
 
 
 @router.get("/{kb_id}", response_model=KnowledgeBaseOut)
 async def get_knowledge_base(
     result: RequireViewer,
+    db: DbSession,
 ) -> KnowledgeBaseOut:
     kb, role = result
-    return _kb_out(kb, my_role=role)
+    creator_username, creator_name = await _creator_identity_for_kb(db, kb)
+    return _kb_out(
+        kb,
+        my_role=role,
+        creator_username=creator_username,
+        creator_name=creator_name,
+    )
 
 
 @router.put("/{kb_id}", response_model=KnowledgeBaseOut)
@@ -220,7 +401,13 @@ async def update_knowledge_base(
         changes["description"] = kb.description
 
     if not changes:
-        return _kb_out(kb, my_role=role)
+        creator_username, creator_name = await _creator_identity_for_kb(db, kb)
+        return _kb_out(
+            kb,
+            my_role=role,
+            creator_username=creator_username,
+            creator_name=creator_name,
+        )
 
     await _record_audit(
         db,
@@ -233,7 +420,13 @@ async def update_knowledge_base(
     )
     await db.commit()
     await db.refresh(kb)
-    return _kb_out(kb, my_role=role)
+    creator_username, creator_name = await _creator_identity_for_kb(db, kb)
+    return _kb_out(
+        kb,
+        my_role=role,
+        creator_username=creator_username,
+        creator_name=creator_name,
+    )
 
 
 @router.delete("/{kb_id}", response_model=KnowledgeBaseOut)
@@ -244,6 +437,11 @@ async def disable_knowledge_base(
     user: CurrentUser,
     db: DbSession,
 ) -> KnowledgeBaseOut:
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="只有管理员可以删除知识库"
+        )
+
     kb, role = result
     kb.is_active = False
 
@@ -258,7 +456,13 @@ async def disable_knowledge_base(
     )
     await db.commit()
     await db.refresh(kb)
-    return _kb_out(kb, my_role=role)
+    creator_username, creator_name = await _creator_identity_for_kb(db, kb)
+    return _kb_out(
+        kb,
+        my_role=role,
+        creator_username=creator_username,
+        creator_name=creator_name,
+    )
 
 
 @router.get("/{kb_id}/permissions", response_model=list[PermissionOut])
@@ -274,21 +478,15 @@ async def list_permissions(
 
 @router.get("/{kb_id}/permission-candidates", response_model=list[PermissionUserOut])
 async def list_permission_candidates(
-    result: RequireOwner,
+    result: RequireViewer,
+    user: CurrentUser,
     db: DbSession,
     search: str = Query("", max_length=128),
 ) -> list[PermissionUserOut]:
     _kb, _role = result
-    query = select(User).where(User.is_active == True)  # noqa: E712
-    if search:
-        pattern = f"%{search}%"
-        query = query.where(User.username.ilike(pattern) | User.display_name.ilike(pattern))
-    query = query.order_by(User.created_at.desc()).limit(500)
-    users = (await db.execute(query)).scalars().all()
-    return [
-        PermissionUserOut(id=user.id, username=user.username, display_name=user.display_name)
-        for user in users
-    ]
+    if user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
+    return await _permission_candidates(db, search)
 
 
 @router.put("/{kb_id}/permissions", response_model=list[PermissionOut])
@@ -301,77 +499,9 @@ async def update_permissions(
     db: DbSession,
 ) -> list[PermissionOut]:
     kb, _role = result
-
-    incoming_user_ids = [permission.user_id for permission in body.permissions]
-    if len(set(incoming_user_ids)) != len(incoming_user_ids):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="权限列表中存在重复用户",
-        )
-
-    if incoming_user_ids:
-        existing_users = (
-            await db.execute(select(User.id).where(User.id.in_(incoming_user_ids)))
-        ).scalars()
-        missing_user_ids = set(incoming_user_ids) - set(existing_users.all())
-        if missing_user_ids:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="权限列表中存在不存在的用户",
-            )
-
-    # Load existing permissions
-    existing_rows = await _load_permissions(db, kb.id)
-    existing_map: dict[str, KnowledgeBasePermission] = {r.user_id: r for r in existing_rows}
-
-    incoming_user_id_set = set(incoming_user_ids)
-
-    # Prevent removing the last owner
-    current_owner_ids = {r.user_id for r in existing_rows if r.role == "owner"}
-    incoming_owner_ids = {p.user_id for p in body.permissions if p.role == "owner"}
-    # After applying changes, who will be owner?
-    # Keep owners that are not in incoming list (unchanged) + incoming owners
-    owners_not_in_incoming = current_owner_ids - incoming_user_id_set
-    final_owner_ids = owners_not_in_incoming | incoming_owner_ids
-    if not final_owner_ids:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="不能移除最后一个 owner",
-        )
-
-    # Apply changes
-    for item in body.permissions:
-        if item.user_id in existing_map:
-            existing_map[item.user_id].role = item.role
-        else:
-            db.add(
-                KnowledgeBasePermission(
-                    knowledge_base_id=kb.id,
-                    user_id=item.user_id,
-                    role=item.role,
-                )
-            )
-
-    # Remove permissions not in incoming list
-    for user_id, perm in existing_map.items():
-        if user_id not in incoming_user_id_set:
-            await db.delete(perm)
-
-    await _record_audit(
-        db,
-        actor_user_id=user.id,
-        action="knowledge_base.permissions.update",
-        target_type="knowledge_base",
-        target_id=kb.id,
-        request=request,
-        details={"user_count": len(body.permissions)},
-    )
-    await db.commit()
-
-    # Re-query and return
-    rows = await _load_permissions(db, kb.id)
-    users_map = await _users_map_for_permissions(db, rows)
-    return [_permission_out(row, users_map) for row in rows]
+    if user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
+    return await _apply_permission_update(kb, request, body, user, db)
 
 
 # ── Admin view: list ALL knowledge bases ───────────────────────────────
@@ -408,9 +538,24 @@ async def admin_list_knowledge_bases(
     query = query.order_by(KnowledgeBase.created_at.desc()).offset(offset).limit(page_size)
     result = await db.execute(query)
     kbs = list(result.scalars().all())
+    creator_identities = await _user_identities_for_users(
+        db,
+        [kb.creator_id for kb in kbs if kb.creator_id],
+    )
+    document_counts, permission_counts = await _admin_kb_archive_counts(db, [kb.id for kb in kbs])
 
     return KnowledgeBaseListResponse(
-        items=[_kb_out(kb) for kb in kbs],
+        items=[
+            _kb_out(
+                kb,
+                creator_username=creator_identities.get(kb.creator_id or "", ("", ""))[0],
+                creator_name=creator_identities.get(kb.creator_id or "", ("", ""))[1],
+                document_count=document_counts.get(kb.id, (0, 0))[0],
+                active_document_count=document_counts.get(kb.id, (0, 0))[1],
+                permission_count=permission_counts.get(kb.id, 0),
+            )
+            for kb in kbs
+        ],
         total=total,
         page=page,
         page_size=page_size,
@@ -431,3 +576,34 @@ async def admin_list_permissions(
     rows = await _load_permissions(db, kb.id)
     users_map = await _users_map_for_permissions(db, rows)
     return [_permission_out(row, users_map) for row in rows]
+
+
+@admin_router.get("/{kb_id}/permission-candidates", response_model=list[PermissionUserOut])
+async def admin_list_permission_candidates(
+    kb_id: str,
+    user: Annotated[User, Depends(current_user)],
+    db: DbSession,
+    search: str = Query("", max_length=128),
+) -> list[PermissionUserOut]:
+    if user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
+    kb = await db.get(KnowledgeBase, kb_id)
+    if kb is None or not kb.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="知识库不存在")
+    return await _permission_candidates(db, search)
+
+
+@admin_router.put("/{kb_id}/permissions", response_model=list[PermissionOut])
+async def admin_update_permissions(
+    kb_id: str,
+    request: Request,
+    body: PermissionUpdateRequest,
+    user: Annotated[User, Depends(current_user)],
+    db: DbSession,
+) -> list[PermissionOut]:
+    if user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
+    kb = await db.get(KnowledgeBase, kb_id)
+    if kb is None or not kb.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="知识库不存在")
+    return await _apply_permission_update(kb, request, body, user, db)

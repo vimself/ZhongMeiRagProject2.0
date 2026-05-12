@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -20,8 +21,20 @@ class DashScopeRateLimitError(RuntimeError):
     """DashScope 返回 429/限流时抛出。"""
 
 
+class DashScopeRequestError(RuntimeError):
+    """DashScope rejected a non-retryable request."""
+
+
+@dataclass(frozen=True)
+class ChatStreamDelta:
+    kind: str
+    delta: str
+
+
 class DashScopeClient:
     """DashScope OpenAI 兼容接口客户端。"""
+
+    MULTIMODAL_EMBEDDING_MAX_CONTENTS = 20
 
     def __init__(
         self,
@@ -73,10 +86,11 @@ class DashScopeClient:
                 "dimensions": self.settings.dashscope_embedding_dimension,
             },
         )
-        if response.status_code == 429:
-            model = self.settings.dashscope_embedding_model
-            raise DashScopeRateLimitError(f"DashScope embedding rate limited (model={model})")
-        response.raise_for_status()
+        self._raise_for_status(
+            response,
+            operation="embedding",
+            model=self.settings.dashscope_embedding_model,
+        )
         body = response.json()
         rows = body.get("data")
         if not isinstance(rows, list):
@@ -90,6 +104,14 @@ class DashScopeClient:
         return embeddings
 
     async def _embed_multimodal_batch(self, inputs: Sequence[str]) -> list[list[float]]:
+        embeddings: list[list[float]] = []
+        max_contents = self.MULTIMODAL_EMBEDDING_MAX_CONTENTS
+        for offset in range(0, len(inputs), max_contents):
+            batch = inputs[offset : offset + max_contents]
+            embeddings.extend(await self._embed_multimodal_request(batch))
+        return embeddings
+
+    async def _embed_multimodal_request(self, inputs: Sequence[str]) -> list[list[float]]:
         url = (
             self.settings.dashscope_native_base_url.rstrip("/")
             + "/services/embeddings/multimodal-embedding/multimodal-embedding"
@@ -102,10 +124,11 @@ class DashScopeClient:
                 "parameters": {"dimension": self.settings.dashscope_embedding_dimension},
             },
         )
-        if response.status_code == 429:
-            model = self.settings.dashscope_embedding_model
-            raise DashScopeRateLimitError(f"DashScope embedding rate limited (model={model})")
-        response.raise_for_status()
+        self._raise_for_status(
+            response,
+            operation="multimodal embedding",
+            model=self.settings.dashscope_embedding_model,
+        )
         body = response.json()
         output = body.get("output")
         rows = output.get("embeddings") if isinstance(output, dict) else None
@@ -119,6 +142,19 @@ class DashScopeClient:
             embeddings.append([float(value) for value in embedding])
         return embeddings
 
+    def _raise_for_status(self, response: httpx.Response, *, operation: str, model: str) -> None:
+        if response.status_code < 400:
+            return
+        if response.status_code == 429:
+            raise DashScopeRateLimitError(f"DashScope {operation} rate limited (model={model})")
+        if response.status_code < 500:
+            body = response.text[:1000]
+            raise DashScopeRequestError(
+                f"DashScope {operation} request failed with HTTP {response.status_code} "
+                f"(model={model}): {body}"
+            )
+        response.raise_for_status()
+
     def _uses_multimodal_embedding_endpoint(self) -> bool:
         model = self.settings.dashscope_embedding_model.lower()
         return "vl-embedding" in model or model.startswith("multimodal-embedding")
@@ -129,6 +165,16 @@ class DashScopeClient:
         *,
         model: str | None = None,
     ) -> AsyncIterator[str]:
+        async for event in self.stream_chat_events(messages, model=model):
+            if event.kind == "content":
+                yield event.delta
+
+    async def stream_chat_events(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        model: str | None = None,
+    ) -> AsyncIterator[ChatStreamDelta]:
         chosen = model or self.settings.dashscope_chat_model
         await self._rate_limiter.acquire(chosen, tokens=1)
         try:
@@ -139,6 +185,7 @@ class DashScopeClient:
                     "model": chosen,
                     "messages": messages,
                     "stream": True,
+                    "enable_thinking": self.settings.dashscope_chat_enable_thinking,
                 },
             ) as response:
                 if response.status_code == 429:
@@ -149,34 +196,44 @@ class DashScopeClient:
                         payload = line[6:]
                         if payload.strip() == "[DONE]":
                             break
-                        delta = _extract_stream_delta(payload)
-                        if delta:
-                            yield delta
+                        for event in _extract_stream_deltas(payload):
+                            yield event
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 429:
                 raise DashScopeRateLimitError(str(exc)) from exc
             raise
 
 
-def _extract_stream_delta(payload: str) -> str:
+def _extract_stream_deltas(payload: str) -> list[ChatStreamDelta]:
     try:
         body = json.loads(payload)
     except json.JSONDecodeError:
-        return ""
+        return []
     choices = body.get("choices")
     if not isinstance(choices, list) or not choices:
-        return ""
+        return []
     first = choices[0]
     if not isinstance(first, dict):
-        return ""
+        return []
+    events: list[ChatStreamDelta] = []
     delta = first.get("delta")
     if isinstance(delta, dict):
+        reasoning = delta.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning:
+            events.append(ChatStreamDelta(kind="reasoning", delta=reasoning))
         content = delta.get("content")
-        if isinstance(content, str):
-            return content
+        if isinstance(content, str) and content:
+            events.append(ChatStreamDelta(kind="content", delta=content))
     message = first.get("message")
     if isinstance(message, dict):
         content = message.get("content")
-        if isinstance(content, str):
-            return content
+        if isinstance(content, str) and content:
+            events.append(ChatStreamDelta(kind="content", delta=content))
+    return events
+
+
+def _extract_stream_delta(payload: str) -> str:
+    for event in _extract_stream_deltas(payload):
+        if event.kind == "content":
+            return event.delta
     return ""

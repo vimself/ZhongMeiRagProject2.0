@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
+from pydantic import SecretStr
 
 from app.db.base import Base
 from app.db.session import AsyncSessionLocal, engine
@@ -14,7 +18,13 @@ from app.models.auth import User
 from app.models.document import Document, KnowledgeChunkV2
 from app.models.knowledge_base import KnowledgeBase
 from app.security.password import hash_password
-from app.services.llm.client import DashScopeRateLimitError, _extract_stream_delta
+from app.services.llm.client import (
+    ChatStreamDelta,
+    DashScopeClient,
+    DashScopeRateLimitError,
+    _extract_stream_delta,
+    _extract_stream_deltas,
+)
 from app.services.rag import graph as rag_graph
 from app.services.rag.citations import CitationMeta, build_reference_payload
 
@@ -89,6 +99,48 @@ def test_dashscope_stream_delta_parser_extracts_content() -> None:
     payload = '{"choices":[{"delta":{"content":"回答片段[cite:1]"}}]}'
     assert _extract_stream_delta(payload) == "回答片段[cite:1]"
     assert _extract_stream_delta('{"choices":[{"delta":{}}]}') == ""
+    assert _extract_stream_delta('{"choices":[{"delta":{"reasoning_content":"thinking"}}]}') == ""
+    events = _extract_stream_deltas('{"choices":[{"delta":{"reasoning_content":"thinking"}}]}')
+    assert events == [ChatStreamDelta(kind="reasoning", delta="thinking")]
+
+
+def test_dashscope_stream_chat_disables_thinking(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class _Limiter:
+        async def acquire(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    settings = SimpleNamespace(
+        dashscope_api_key=SecretStr("test-key"),
+        dashscope_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        dashscope_chat_model="qwen3.6-plus",
+        dashscope_chat_enable_thinking=False,
+    )
+    monkeypatch.setattr("app.services.llm.client.get_settings", lambda: settings)
+
+    async def _run() -> None:
+        http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url=settings.dashscope_base_url,
+        )
+        async with DashScopeClient(client=http_client, rate_limiter=_Limiter()) as client:  # type: ignore[arg-type]
+            messages = [{"role": "user", "content": "q"}]
+            chunks = [chunk async for chunk in client.stream_chat(messages)]
+        assert chunks == ["ok"]
+
+    asyncio.run(_run())
+    assert captured["model"] == "qwen3.6-plus"
+    assert captured["stream"] is True
+    assert captured["enable_thinking"] is False
 
 
 def test_rrf_fusion_merges_ranks() -> None:
@@ -190,8 +242,8 @@ def test_rewrite_citations_discards_out_of_range() -> None:
             score=0.0,
         )
     ]
-    text = "第一段[cite:1]。第二段[cite:9]。"
-    assert rag_graph.rewrite_citations(text, state) == "第一段^[1]。第二段。"
+    text = "第一段[cite:1]。第二段[cite:9]。第三段^[1]。"
+    assert rag_graph.rewrite_citations(text, state) == "第一段。第二段。第三段。"
 
 
 def test_build_reference_payload_contains_urls() -> None:

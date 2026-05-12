@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 from sse_starlette.sse import EventSourceResponse
@@ -33,7 +34,7 @@ from app.services.rag.citations import CitationMeta, build_reference_payload
 from app.services.rag.graph import (
     build_reference_payloads,
     fallback_no_hit_stream,
-    generate_stream,
+    generate_stream_events,
     prepare_citations,
     rewrite_citations,
 )
@@ -63,6 +64,18 @@ def _iso(value: datetime | None) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.isoformat()
+
+
+def _is_no_evidence_answer(answer: str) -> bool:
+    normalized = re.sub(r"\s+", "", answer or "")
+    return any(
+        phrase in normalized
+        for phrase in (
+            "无法在知识库中找到依据",
+            "未在知识库中找到依据",
+            "没有在知识库中找到依据",
+        )
+    )
 
 
 def _summary(session: ChatSession, message_count: int) -> ChatSessionSummary:
@@ -158,7 +171,11 @@ async def get_session(session_id: str, user: CurrentUser, db: DbSession) -> Chat
         select(ChatMessage)
         .where(ChatMessage.session_id == session.id)
         .options(selectinload(ChatMessage.citations))
-        .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
+        .order_by(
+            ChatMessage.created_at.asc(),
+            case((ChatMessage.role == "user", 0), (ChatMessage.role == "assistant", 1), else_=2),
+            ChatMessage.id.asc(),
+        )
     )
     messages = (await db.execute(msgs_stmt)).scalars().all()
     return ChatSessionDetail(
@@ -220,35 +237,39 @@ async def chat_stream(
         db.add(session)
         await db.flush()
     session_id = session.id
-
-    state = await prepare_citations(
-        db,
-        kb_id=kb.id,
-        user_id=user.id,
-        query=body.question,
-        filters=body.filters,
-        k=body.k,
-        query_vector=await _query_embedding(body.question),
-    )
-
-    references = build_reference_payloads(state)
-
-    # Audit
-    await _record_audit(
-        db,
-        actor_user_id=user.id,
-        action="chat.stream.start",
-        target_type="chat_session",
-        target_id=session_id,
-        request=request,
-        details={"kb_id": kb.id, "citations": len(references)},
-    )
     await db.commit()
 
     question = body.question
     settings = get_settings()
 
     async def event_gen() -> AsyncIterator[dict[str, Any]]:
+        yield {
+            "event": "status",
+            "data": json.dumps(
+                {"stage": "retrieving", "message": "正在检索证据"},
+                ensure_ascii=False,
+            ),
+        }
+        state = await prepare_citations(
+            db,
+            kb_id=kb.id,
+            user_id=user.id,
+            query=body.question,
+            filters=body.filters,
+            k=body.k,
+            query_vector=await _query_embedding(body.question),
+        )
+        references = build_reference_payloads(state)
+        await _record_audit(
+            db,
+            actor_user_id=user.id,
+            action="chat.stream.start",
+            target_type="chat_session",
+            target_id=session_id,
+            request=request,
+            details={"kb_id": kb.id, "citations": len(references)},
+        )
+        await db.commit()
         # 1) 先下发 references
         yield {
             "event": "references",
@@ -269,10 +290,23 @@ async def chat_stream(
                 state.finish_reason = "no_hit"
                 state.model_used = "fallback"
             else:
+                yield {
+                    "event": "status",
+                    "data": json.dumps(
+                        {"stage": "generating", "message": "正在组织答案"},
+                        ensure_ascii=False,
+                    ),
+                }
                 try:
-                    async for delta in generate_stream(state):
-                        raw_chunks.append(delta)
-                        rewritten_delta = rewrite_citations(delta, state)
+                    async for event in generate_stream_events(state):
+                        if event.kind == "reasoning":
+                            yield {
+                                "event": "reasoning",
+                                "data": json.dumps({"delta": event.delta}, ensure_ascii=False),
+                            }
+                            continue
+                        raw_chunks.append(event.delta)
+                        rewritten_delta = rewrite_citations(event.delta, state)
                         yield {
                             "event": "content",
                             "data": json.dumps({"delta": rewritten_delta}, ensure_ascii=False),
@@ -291,13 +325,17 @@ async def chat_stream(
             state.answer_rewritten = (
                 rewrite_citations(state.answer_raw, state) if state.has_hit else state.answer_raw
             )
+            visible_citations = state.citations
+            if state.finish_reason != "error" and _is_no_evidence_answer(state.answer_rewritten):
+                state.finish_reason = "no_hit"
+                visible_citations = []
             # 2) 持久化（尽力）
             try:
                 await _persist_turn(
                     session_id=session_id,
                     user_message=question,
                     answer=state.answer_rewritten,
-                    citations=state.citations,
+                    citations=visible_citations,
                     finish_reason=state.finish_reason,
                     model=state.model_used,
                 )
@@ -311,7 +349,7 @@ async def chat_stream(
                         "session_id": session_id,
                         "finish_reason": state.finish_reason or "stop",
                         "model": state.model_used,
-                        "citations": len(references),
+                        "citations": len(visible_citations),
                         "min_score_threshold": settings.chat_min_score_threshold,
                     },
                     ensure_ascii=False,
@@ -346,13 +384,20 @@ async def _persist_turn(
     from app.db.session import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:
-        user_msg = ChatMessage(session_id=session_id, role="user", content=user_message)
+        turn_started_at = datetime.now(UTC)
+        user_msg = ChatMessage(
+            session_id=session_id,
+            role="user",
+            content=user_message,
+            created_at=turn_started_at,
+        )
         assistant_msg = ChatMessage(
             session_id=session_id,
             role="assistant",
             content=answer,
             finish_reason=finish_reason,
             model=model or None,
+            created_at=turn_started_at + timedelta(microseconds=1),
         )
         db.add(user_msg)
         db.add(assistant_msg)

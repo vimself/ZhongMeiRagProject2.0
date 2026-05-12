@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import csv
 import io
 import json
@@ -14,11 +13,12 @@ from app.db.session import AsyncSessionLocal
 from app.models.auth import User
 from app.models.search_export import SearchExportJob
 from app.services.rag.search_service import SearchService
+from app.tasks.async_runner import run_async_task
 
 
 @celery_app.task(name="search.export_generate", bind=True, acks_late=True)
 def export_generate(self: object, *, job_id: str, user_id: str) -> dict[str, object]:
-    return asyncio.run(_run_export(job_id, user_id))
+    return run_async_task(_run_export(job_id, user_id))
 
 
 async def _run_export(job_id: str, user_id: str) -> dict[str, object]:

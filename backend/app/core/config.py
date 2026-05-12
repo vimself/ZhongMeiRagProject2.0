@@ -25,12 +25,17 @@ class Settings(BaseSettings):
     admin_seed_username: str = "admin"
     admin_seed_password: SecretStr | None = None
     admin_seed_display_name: str = "系统管理员"
+    user_seed_username: str = "user"
+    user_seed_password: SecretStr = SecretStr("User@123456")
+    user_seed_display_name: str = "普通用户"
+    default_users_reset_passwords: bool = False
     log_level: str = "INFO"
     dashscope_api_key: SecretStr | None = None
     dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     dashscope_native_base_url: str = "https://dashscope.aliyuncs.com/api/v1"
     dashscope_chat_model: str = "qwen3.6-plus"
     dashscope_chat_model_fallback: str = "qwen3-turbo"
+    dashscope_chat_enable_thinking: bool = False
     dashscope_embedding_model: str = "qwen3-vl-embedding"
     dashscope_embedding_dimension: int = 1024
     ocr_base_url: str = "http://222.195.4.65:8899"

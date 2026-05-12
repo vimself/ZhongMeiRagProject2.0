@@ -77,8 +77,15 @@ export interface ChatStreamDoneEvent {
   min_score_threshold: number
 }
 
+export interface ChatStreamStatusEvent {
+  stage: string
+  message: string
+}
+
 export interface ChatStreamHandlers {
   onReferences: (payload: ChatStreamReferencesEvent) => void
+  onStatus?: (payload: ChatStreamStatusEvent) => void
+  onReasoning?: (delta: string) => void
   onContent: (delta: string) => void
   onDone: (payload: ChatStreamDoneEvent) => void
   onError: (message: string) => void
@@ -132,6 +139,10 @@ export async function streamChat(
         const payload = JSON.parse(ev.data)
         if (ev.event === 'references') {
           handlers.onReferences(payload as ChatStreamReferencesEvent)
+        } else if (ev.event === 'status') {
+          handlers.onStatus?.(payload as ChatStreamStatusEvent)
+        } else if (ev.event === 'reasoning') {
+          handlers.onReasoning?.(String(payload.delta ?? ''))
         } else if (ev.event === 'content') {
           handlers.onContent(String(payload.delta ?? ''))
         } else if (ev.event === 'done') {

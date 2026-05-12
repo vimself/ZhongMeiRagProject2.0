@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import patch
 
@@ -15,11 +16,12 @@ from app.db.base import Base
 from app.db.session import AsyncSessionLocal, engine
 from app.main import create_app
 from app.models.auth import User
+from app.models.chat import ChatMessage, ChatSession
 from app.models.document import Document, KnowledgeChunkV2
 from app.models.knowledge_base import KnowledgeBase, KnowledgeBasePermission
 from app.security.login_limiter import login_failure_limiter
 from app.security.password import hash_password
-from app.services.llm.client import DashScopeRateLimitError
+from app.services.llm.client import ChatStreamDelta, DashScopeRateLimitError
 
 
 @pytest.fixture(autouse=True)
@@ -155,7 +157,7 @@ def test_chat_stream_events_order_and_rewrite() -> None:
 
     get_settings().chat_min_score_threshold = 0.0
     with patch(
-        "app.services.rag.graph._default_llm_stream",
+        "app.services.rag.graph._default_llm_event_stream",
         side_effect=lambda m, mo: _factory(m, mo),
     ):
         client = TestClient(create_app())
@@ -167,12 +169,12 @@ def test_chat_stream_events_order_and_rewrite() -> None:
         )
         assert resp.status_code == 200, resp.text
     events = _parse_sse(resp.text)
-    names = [e[0] for e in events]
+    names = [e[0] for e in events if e[0] != "status"]
     assert names[0] == "references"
     assert "content" in names
     assert names[-1] == "done"
     # 引用 payload 校验
-    refs_payload = events[0][1]
+    refs_payload = next(e[1] for e in events if e[0] == "references")
     assert "session_id" in refs_payload
     assert refs_payload["references"], "应包含 references"
     ref0 = refs_payload["references"][0]
@@ -192,11 +194,42 @@ def test_chat_stream_events_order_and_rewrite() -> None:
         "download_url",
     ]:
         assert key in ref0, f"引用 payload 缺少字段 {key}"
-    # content 必须把 [cite:1] 改写成 ^[1]
+    # content 必须去掉模型输出里的引用角标，引用由 references 单独展示
     content_deltas = [e[1]["delta"] for e in events if e[0] == "content"]
     joined = "".join(content_deltas)
     assert "[cite:" not in joined
-    assert "^[1]" in joined
+    assert "^[1]" not in joined
+
+
+def test_chat_stream_forwards_reasoning_event() -> None:
+    _seed()
+
+    async def _factory(
+        messages: list[dict[str, Any]], model: str | None
+    ) -> AsyncIterator[ChatStreamDelta]:
+        yield ChatStreamDelta(kind="reasoning", delta="先分析问题")
+        yield ChatStreamDelta(kind="content", delta="答案[cite:1]。")
+
+    from app.core.config import get_settings
+
+    get_settings().chat_min_score_threshold = 0.0
+    with patch(
+        "app.services.rag.graph._default_llm_event_stream",
+        side_effect=lambda m, mo: _factory(m, mo),
+    ):
+        client = TestClient(create_app())
+        token = _login(client)
+        resp = client.post(
+            "/api/v2/chat/stream",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"kb_id": "kb-1", "question": "施工 安全"},
+        )
+        assert resp.status_code == 200, resp.text
+
+    events = _parse_sse(resp.text)
+    assert ("reasoning", {"delta": "先分析问题"}) in events
+    content = "".join(e[1]["delta"] for e in events if e[0] == "content")
+    assert "答案。" in content
 
 
 def test_chat_stream_permission_denied() -> None:
@@ -228,6 +261,44 @@ def test_chat_stream_no_hit_returns_fallback_message() -> None:
     assert done["finish_reason"] == "no_hit"
 
 
+def test_chat_stream_model_no_evidence_hides_and_persists_no_citations() -> None:
+    _seed()
+
+    async def _factory(messages: list[dict[str, Any]], model: str | None) -> AsyncIterator[str]:
+        yield "无法在知识库中找到依据"
+
+    from app.core.config import get_settings
+
+    get_settings().chat_min_score_threshold = 0.0
+    with patch(
+        "app.services.rag.graph._default_llm_event_stream",
+        side_effect=lambda m, mo: _factory(m, mo),
+    ):
+        client = TestClient(create_app())
+        token = _login(client)
+        resp = client.post(
+            "/api/v2/chat/stream",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"kb_id": "kb-1", "question": "施工 安全"},
+        )
+        assert resp.status_code == 200, resp.text
+        events = _parse_sse(resp.text)
+        session_id = next(e[1]["session_id"] for e in events if e[0] == "references")
+        done = [e for e in events if e[0] == "done"][-1][1]
+        assert done["finish_reason"] == "no_hit"
+        assert done["citations"] == 0
+
+        detail = client.get(
+            f"/api/v2/chat/sessions/{session_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert detail.status_code == 200
+
+    assistant = [m for m in detail.json()["messages"] if m["role"] == "assistant"]
+    assert assistant[0]["finish_reason"] == "no_hit"
+    assert assistant[0]["citations"] == []
+
+
 def test_chat_sessions_list_and_detail_resigns_tokens() -> None:
     _seed()
 
@@ -238,7 +309,7 @@ def test_chat_sessions_list_and_detail_resigns_tokens() -> None:
 
     get_settings().chat_min_score_threshold = 0.0
     with patch(
-        "app.services.rag.graph._default_llm_stream",
+        "app.services.rag.graph._default_llm_event_stream",
         side_effect=lambda m, mo: _factory(m, mo),
     ):
         client = TestClient(create_app())
@@ -250,7 +321,7 @@ def test_chat_sessions_list_and_detail_resigns_tokens() -> None:
         )
         assert stream_resp.status_code == 200
         events = _parse_sse(stream_resp.text)
-        session_id = events[0][1]["session_id"]
+        session_id = next(e[1]["session_id"] for e in events if e[0] == "references")
 
     # 列表
     list_resp = client.get("/api/v2/chat/sessions", headers={"Authorization": f"Bearer {token}"})
@@ -271,6 +342,49 @@ def test_chat_sessions_list_and_detail_resigns_tokens() -> None:
     assert "token=" in cit["download_url"]
 
 
+def test_chat_session_detail_orders_user_before_assistant_when_timestamps_tie() -> None:
+    _seed()
+
+    async def _inner() -> str:
+        same_time = datetime(2026, 5, 11, 10, 0, 0, tzinfo=UTC)
+        async with AsyncSessionLocal() as session:
+            chat_session = ChatSession(
+                id="session-order", user_id="user-1", knowledge_base_id="kb-1", title="排序"
+            )
+            session.add(chat_session)
+            session.add_all(
+                [
+                    ChatMessage(
+                        id="aaa-assistant",
+                        session_id=chat_session.id,
+                        role="assistant",
+                        content="回答",
+                        created_at=same_time,
+                    ),
+                    ChatMessage(
+                        id="zzz-user",
+                        session_id=chat_session.id,
+                        role="user",
+                        content="提问",
+                        created_at=same_time,
+                    ),
+                ]
+            )
+            await session.commit()
+        return "session-order"
+
+    session_id = asyncio.run(_inner())
+    client = TestClient(create_app())
+    token = _login(client)
+    detail = client.get(
+        f"/api/v2/chat/sessions/{session_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert detail.status_code == 200, detail.text
+    messages = detail.json()["messages"]
+    assert [m["role"] for m in messages] == ["user", "assistant"]
+
+
 def test_chat_session_detail_404_for_other_user() -> None:
     _seed()
 
@@ -279,7 +393,7 @@ def test_chat_session_detail_404_for_other_user() -> None:
         yield "answer[cite:1]."
 
     with patch(
-        "app.services.rag.graph._default_llm_stream",
+        "app.services.rag.graph._default_llm_event_stream",
         side_effect=lambda m, mo: _factory(m, mo),
     ):
         client = TestClient(create_app())
@@ -290,7 +404,7 @@ def test_chat_session_detail_404_for_other_user() -> None:
             json={"kb_id": "kb-1", "question": "施工 安全"},
         )
         events = _parse_sse(stream_resp.text)
-        session_id = events[0][1]["session_id"]
+        session_id = next(e[1]["session_id"] for e in events if e[0] == "references")
 
     token2 = _login(client, "u2")
     resp = client.get(

@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models.chat import ChatMessage, ChatMessageCitation, ChatSession
-from app.services.llm.client import DashScopeClient, DashScopeRateLimitError
+from app.services.llm.client import ChatStreamDelta, DashScopeClient, DashScopeRateLimitError
 from app.services.rag.citations import CitationMeta, build_reference_payload
 from app.services.rag.retriever import RetrievalResult, Retriever
 
@@ -236,6 +236,7 @@ def should_answer(state: RagState, *, min_score: float = 0.0) -> bool:
 
 
 LlmStreamFactory = Callable[[list[dict[str, Any]], str | None], AsyncIterator[str]]
+LlmEventStreamFactory = Callable[[list[dict[str, Any]], str | None], AsyncIterator[ChatStreamDelta]]
 
 
 async def _default_llm_stream(
@@ -245,6 +246,15 @@ async def _default_llm_stream(
     async with DashScopeClient() as client:
         async for chunk in client.stream_chat(messages, model=model):
             yield chunk
+
+
+async def _default_llm_event_stream(
+    messages: list[dict[str, Any]],
+    model: str | None,
+) -> AsyncIterator[ChatStreamDelta]:
+    async with DashScopeClient() as client:
+        async for event in client.stream_chat_events(messages, model=model):
+            yield event
 
 
 def build_prompt(state: RagState) -> list[dict[str, Any]]:
@@ -257,16 +267,22 @@ def build_prompt(state: RagState) -> list[dict[str, Any]]:
         )
     context_block = "\n\n".join(context_lines) if context_lines else "(无检索结果)"
     system_prompt = (
-        "你是一名严谨的工程文档助理。请仅依据提供的检索上下文回答用户问题，"
-        "每一个来自上下文的结论都必须以形如 [cite:编号] 的占位符在句尾标出引用。"
-        "编号严格对应上下文前缀的 [cite:N]。"
-        "若上下文不足以回答，请明确回复“无法在知识库中找到依据”，不要编造。"
-        "使用简洁中文，不要输出 Markdown 代码块之外的标题或列表符号。"
+        "You are a careful engineering document assistant. Answer in concise Chinese. "
+        "Use only the retrieved context; do not invent facts. "
+        "Use clean Markdown only when it improves readability: short paragraphs, bullets, "
+        "or compact tables are allowed. "
+        "Do not output citation markers, footnotes, [cite:N], ^[N], reference lists, "
+        "or a section named '引用依据'/'引用内容'; the application shows sources separately. "
+        "Rewrite OCR or LaTeX-like fragments into plain user-facing Chinese. For example, "
+        "write '$5^{\\circ}C \\sim 35^{\\circ}C$' as '5°C 至 35°C'. "
+        "If the context is insufficient, say '无法在知识库中找到依据'. "
+        "Do not output code blocks unless the user explicitly asks for code."
     )
     user_prompt = (
         f"## 检索上下文\n{context_block}\n\n"
         f"## 用户问题\n{state.raw_query}\n\n"
-        "请基于上下文作答，每条结论都附 [cite:编号]。"
+        "请基于上下文作答。先直接回答结论，再补充必要的要点或表格。"
+        "不要把检索上下文原样复制给用户，不要输出引用编号或参考文档清单。"
     )
     return [
         {"role": "system", "content": system_prompt},
@@ -281,7 +297,7 @@ async def generate_stream(
 ) -> AsyncIterator[str]:
     """按 state.citations 生成答案流；429 自动降级到 fallback 模型；两次都失败时抛出。
 
-    输出原始文本（含 [cite:i] 占位），由 rewrite_citations 统一改写为 ^[n]。
+    输出原始文本，调用方会通过 rewrite_citations 移除模型误出的引用角标。
     调用方负责在生成结束后累积到 state.answer_raw。
     """
     settings = get_settings()
@@ -303,6 +319,36 @@ async def generate_stream(
     state.finish_reason = "stop"
 
 
+async def generate_stream_events(
+    state: RagState,
+    *,
+    stream_factory: LlmEventStreamFactory | None = None,
+) -> AsyncIterator[ChatStreamDelta]:
+    settings = get_settings()
+    factory: LlmEventStreamFactory = stream_factory or _default_llm_event_stream
+    messages = build_prompt(state)
+    chosen = settings.dashscope_chat_model
+    try:
+        async for event in factory(messages, chosen):
+            state.model_used = chosen
+            if isinstance(event, str):
+                yield ChatStreamDelta(kind="content", delta=event)
+                continue
+            yield event
+        state.finish_reason = "stop"
+        return
+    except DashScopeRateLimitError:
+        pass
+    fallback = settings.dashscope_chat_model_fallback
+    async for event in factory(messages, fallback):
+        state.model_used = fallback
+        if isinstance(event, str):
+            yield ChatStreamDelta(kind="content", delta=event)
+            continue
+        yield event
+    state.finish_reason = "stop"
+
+
 async def fallback_no_hit_stream() -> AsyncIterator[str]:
     """无命中兜底：单一 delta。"""
     yield get_settings().chat_no_hit_message
@@ -312,16 +358,9 @@ async def fallback_no_hit_stream() -> AsyncIterator[str]:
 
 
 def rewrite_citations(text: str, state: RagState) -> str:
-    """将 [cite:i] 替换为 ^[n]；丢弃越界角标。"""
-    valid_indexes = {c.index for c in state.citations}
-
-    def _replace(match: re.Match[str]) -> str:
-        idx = int(match.group(1))
-        if idx not in valid_indexes:
-            return ""
-        return f"^[{idx}]"
-
-    rewritten = CITE_PATTERN.sub(_replace, text)
+    """移除模型输出中的引用角标；引用由前端证据面板和参考文档区展示。"""
+    rewritten = CITE_PATTERN.sub("", text)
+    rewritten = re.sub(r"\^\[\d+\]|\[\^\d+\]", "", rewritten)
     return rewritten
 
 

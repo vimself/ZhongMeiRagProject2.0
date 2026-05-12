@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 from pathlib import Path
 from typing import Any
@@ -22,6 +21,7 @@ from app.services.ingest.track_a_indexer import TrackAIndexer
 from app.services.ingest.track_b_indexer import write_page_index
 from app.services.ocr.client import DeepSeekOCRClient
 from app.services.ocr.exceptions import OCRTransient
+from app.tasks.async_runner import run_async_task
 
 
 @celery_app.task(
@@ -34,12 +34,12 @@ from app.services.ocr.exceptions import OCRTransient
     max_retries=5,
 )
 def process(self: Task, *, job_id: str, document_id: str, actor_user_id: str) -> dict[str, Any]:
-    return asyncio.run(process_ingest_job(job_id, document_id, actor_user_id))
+    return run_async_task(process_ingest_job(job_id, document_id, actor_user_id))
 
 
 @celery_app.task(name="ingest.retry")
 def retry(job_id: str, document_id: str, actor_user_id: str) -> dict[str, Any]:
-    return asyncio.run(process_ingest_job(job_id, document_id, actor_user_id))
+    return run_async_task(process_ingest_job(job_id, document_id, actor_user_id))
 
 
 @celery_app.task(name="ingest.dead_letter_handler")

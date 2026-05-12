@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import io
 import os
 import re
@@ -42,23 +43,79 @@ from process.image_process import DeepseekOCR2Processor  # noqa: E402
 from process.ngram_norepeat import NoRepeatNGramLogitsProcessor  # noqa: E402
 from transformers import AutoTokenizer  # noqa: E402,F401
 from vllm import LLM, SamplingParams  # noqa: E402
+from vllm.model_executor.layers.sampler import get_sampler  # noqa: E402
+import vllm.model_executor.models.registry as vllm_model_registry  # noqa: E402
 from vllm.model_executor.models.registry import ModelRegistry  # noqa: E402
+
+_original_compute_logits = getattr(DeepseekOCR2ForCausalLM, "compute_logits", None)
+_original_is_text_generation_model = getattr(
+    vllm_model_registry,
+    "is_text_generation_model",
+    None,
+)
+
+
+def _is_text_generation_model(model: object) -> bool:
+    if model is DeepseekOCR2ForCausalLM or getattr(model, "__name__", "") == "DeepseekOCR2ForCausalLM":
+        return True
+    if callable(_original_is_text_generation_model):
+        return bool(_original_is_text_generation_model(model))
+    return False
+
+
+if callable(_original_is_text_generation_model):
+    vllm_model_registry.is_text_generation_model = _is_text_generation_model
+
+
+def _compute_logits(self: object, hidden_states: torch.Tensor, sampling_metadata: object = None):
+    if _original_compute_logits is None:
+        language_model = getattr(self, "language_model", None)
+        return language_model.compute_logits(hidden_states, sampling_metadata)
+    compute_params = inspect.signature(_original_compute_logits).parameters
+    if "sampling_metadata" in compute_params:
+        return _original_compute_logits(self, hidden_states, sampling_metadata)
+    return _original_compute_logits(self, hidden_states)
+
+
+def _sample(self: object, logits: torch.Tensor, sampling_metadata: object):
+    sampler = getattr(self, "_zhongmei_sampler", None)
+    if sampler is None:
+        sampler = get_sampler()
+        setattr(self, "_zhongmei_sampler", sampler)
+    return sampler(logits, sampling_metadata)
+
+
+DeepseekOCR2ForCausalLM.compute_logits = _compute_logits
+DeepseekOCR2ForCausalLM.sample = _sample
 
 ModelRegistry.register_model("DeepseekOCR2ForCausalLM", DeepseekOCR2ForCausalLM)
 
-llm = LLM(
-    model=MODEL_PATH,
-    hf_overrides={"architectures": ["DeepseekOCR2ForCausalLM"]},
-    block_size=256,
-    enforce_eager=False,
-    trust_remote_code=True,
-    max_model_len=8192,
-    swap_space=0,
-    max_num_seqs=MAX_CONCURRENCY,
-    tensor_parallel_size=1,
-    gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
-    disable_mm_preprocessor_cache=True,
+llm_signature = inspect.signature(LLM).parameters
+llm_kwargs: dict[str, Any] = {
+    "model": MODEL_PATH,
+    "hf_overrides": {"architectures": ["DeepseekOCR2ForCausalLM"]},
+    "block_size": 256,
+    "enforce_eager": False,
+    "trust_remote_code": True,
+    "max_model_len": 8192,
+    "swap_space": 0,
+    "max_num_seqs": MAX_CONCURRENCY,
+    "tensor_parallel_size": 1,
+    "gpu_memory_utilization": GPU_MEMORY_UTILIZATION,
+    "disable_mm_preprocessor_cache": True,
+}
+if "task" in llm_signature:
+    llm_kwargs["task"] = "generate"
+if "runner" in llm_signature:
+    llm_kwargs["runner"] = "generate"
+print(
+    "Initializing vLLM DeepSeek-OCR with "
+    f"task={llm_kwargs.get('task', '<unsupported>')} "
+    f"runner={llm_kwargs.get('runner', '<unsupported>')}",
+    flush=True,
 )
+
+llm = LLM(**llm_kwargs)
 
 logits_processors = [
     NoRepeatNGramLogitsProcessor(

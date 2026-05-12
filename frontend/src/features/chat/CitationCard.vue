@@ -21,7 +21,6 @@ const scoreLabel = computed(() => `relevance ${props.citation.score.toFixed(3)}`
 <template>
   <article class="citation-card" :class="{ compact }">
     <header class="citation-card__head">
-      <span class="citation-card__index">[{{ citation.index }}]</span>
       <span class="citation-card__title" :title="citation.document_title">
         {{ citation.document_title || '未命名文档' }}
       </span>
@@ -49,7 +48,8 @@ const scoreLabel = computed(() => `relevance ${props.citation.score.toFixed(3)}`
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: 360px;
+  width: 100%;
+  min-width: 0;
   padding: 12px 14px;
   background: #fff;
   border: 1px solid #e5e7eb;
@@ -57,10 +57,10 @@ const scoreLabel = computed(() => `relevance ${props.citation.score.toFixed(3)}`
   color: #111827;
   font-size: 13px;
   line-height: 1.55;
+  overflow: hidden;
 }
 
 .citation-card.compact {
-  max-width: 280px;
   padding: 10px 12px;
 }
 
@@ -89,9 +89,25 @@ const scoreLabel = computed(() => `relevance ${props.citation.score.toFixed(3)}`
 
 .citation-card__meta {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: 2fr 1fr;
+  grid-template-rows: auto auto;
   gap: 8px 12px;
   margin: 0;
+}
+
+.citation-card__meta > div:first-child {
+  grid-column: 1;
+  grid-row: 1 / 3;
+}
+
+.citation-card__meta > div:nth-child(2) {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.citation-card__meta > div:nth-child(3) {
+  grid-column: 2;
+  grid-row: 2;
 }
 
 .citation-card__meta dt {
@@ -106,9 +122,10 @@ const scoreLabel = computed(() => `relevance ${props.citation.score.toFixed(3)}`
   color: #111827;
   font-weight: 500;
   font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
+  min-width: 0;
 }
 
 .citation-card__snippet {
@@ -120,6 +137,10 @@ const scoreLabel = computed(() => `relevance ${props.citation.score.toFixed(3)}`
   border-left: 2px solid #0f766e;
   border-radius: 0 4px 4px 0;
   max-height: 140px;
-  overflow: auto;
+  overflow: hidden auto;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
+  min-width: 0;
 }
 </style>

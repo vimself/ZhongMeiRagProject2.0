@@ -144,10 +144,10 @@ class SearchService:
 
         return counter.most_common(limit)
 
-    async def doc_types(self, user: User) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+    async def doc_types(self, user: User) -> list[tuple[str, int]]:
         accessible_ids = await self.get_accessible_kb_ids(user)
         if not accessible_ids:
-            return [], []
+            return []
 
         kind_result = await self.db.execute(
             select(Document.doc_kind, func.count())
@@ -159,16 +159,4 @@ class SearchService:
         )
         doc_kinds = [(row[0] or "other", row[1]) for row in kind_result.all()]
 
-        scheme_result = await self.db.execute(
-            select(Document.scheme_type, func.count())
-            .where(
-                Document.knowledge_base_id.in_(accessible_ids),
-                Document.status != "disabled",
-                Document.scheme_type.isnot(None),
-                Document.scheme_type != "",
-            )
-            .group_by(Document.scheme_type)
-        )
-        scheme_types = [(row[0], row[1]) for row in scheme_result.all()]
-
-        return doc_kinds, scheme_types
+        return doc_kinds

@@ -10,6 +10,7 @@ from app.db.base import Base
 from app.db.session import AsyncSessionLocal, engine
 from app.main import create_app
 from app.models.auth import AuditLog, User
+from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBasePermission
 from app.security.login_limiter import login_failure_limiter
 from app.security.password import hash_password
@@ -96,8 +97,11 @@ class TestKnowledgeBaseCRUD:
         data = resp.json()
         assert data["name"] == "stage4测试知识库"
         assert data["description"] == "测试描述"
-        assert data["my_role"] == "owner"
+        assert data["my_role"] == "admin"
         assert data["is_active"] is True
+        assert data["creator_id"] == tokens["user"]["id"]
+        assert data["creator_username"] == "admin"
+        assert data["creator_name"] == "系统管理员"
 
         # Verify permission record created
         async def _check() -> str | None:
@@ -110,6 +114,20 @@ class TestKnowledgeBaseCRUD:
                 return perm
 
         assert asyncio.run(_check()) == "owner"
+
+    def test_normal_user_cannot_create_kb(self) -> None:
+        _seed_admin()
+        _seed_user("normal_creator")
+        client = TestClient(create_app())
+        tokens = _login(client, "normal_creator", "user-pass")
+
+        resp = client.post(
+            "/api/v2/knowledge-bases",
+            headers=_auth_header(tokens["access_token"]),
+            json={"name": "普通用户创建"},
+        )
+        assert resp.status_code == 403
+        assert "只有管理员可以创建知识库" in resp.json()["detail"]
 
     def test_create_kb_audit_log(self) -> None:
         _seed_admin()
@@ -334,7 +352,7 @@ class TestKnowledgeBaseCRUD:
 
 
 class TestKnowledgeBasePermissionBoundary:
-    def test_owner_can_edit_and_delete(self) -> None:
+    def test_admin_can_edit_and_delete(self) -> None:
         _seed_admin()
         client = TestClient(create_app())
         tokens = _login(client)
@@ -346,7 +364,7 @@ class TestKnowledgeBasePermissionBoundary:
         )
         kb_id = create_resp.json()["id"]
 
-        # Owner can update
+        # Admin can update
         resp = client.put(
             f"/api/v2/knowledge-bases/{kb_id}",
             headers=_auth_header(tokens["access_token"]),
@@ -354,12 +372,50 @@ class TestKnowledgeBasePermissionBoundary:
         )
         assert resp.status_code == 200
 
-        # Owner can delete
+        # Admin can delete
         resp = client.delete(
             f"/api/v2/knowledge-bases/{kb_id}",
             headers=_auth_header(tokens["access_token"]),
         )
         assert resp.status_code == 200
+
+    def test_regular_owner_can_edit_but_not_delete_kb(self) -> None:
+        _seed_admin()
+        user_id = _seed_user("regular_owner")
+        client = TestClient(create_app())
+        admin_tokens = _login(client)
+
+        create_resp = client.post(
+            "/api/v2/knowledge-bases",
+            headers=_auth_header(admin_tokens["access_token"]),
+            json={"name": "普通Owner测试"},
+        )
+        kb_id = create_resp.json()["id"]
+        client.put(
+            f"/api/v2/knowledge-bases/{kb_id}/permissions",
+            headers=_auth_header(admin_tokens["access_token"]),
+            json={
+                "permissions": [
+                    {"user_id": admin_tokens["user"]["id"], "role": "owner"},
+                    {"user_id": user_id, "role": "owner"},
+                ]
+            },
+        )
+
+        user_tokens = _login(client, "regular_owner", "user-pass")
+        resp = client.put(
+            f"/api/v2/knowledge-bases/{kb_id}",
+            headers=_auth_header(user_tokens["access_token"]),
+            json={"name": "普通Owner可编辑"},
+        )
+        assert resp.status_code == 200
+
+        resp = client.delete(
+            f"/api/v2/knowledge-bases/{kb_id}",
+            headers=_auth_header(user_tokens["access_token"]),
+        )
+        assert resp.status_code == 403
+        assert "只有管理员可以删除知识库" in resp.json()["detail"]
 
     def test_editor_can_edit_but_not_delete(self) -> None:
         _seed_admin()
@@ -379,7 +435,12 @@ class TestKnowledgeBasePermissionBoundary:
         client.put(
             f"/api/v2/knowledge-bases/{kb_id}/permissions",
             headers=_auth_header(admin_tokens["access_token"]),
-            json={"permissions": [{"user_id": user_id, "role": "editor"}]},
+            json={
+                "permissions": [
+                    {"user_id": admin_tokens["user"]["id"], "role": "owner"},
+                    {"user_id": user_id, "role": "editor"},
+                ]
+            },
         )
 
         # Login as editor
@@ -433,7 +494,12 @@ class TestKnowledgeBasePermissionBoundary:
         client.put(
             f"/api/v2/knowledge-bases/{kb_id}/permissions",
             headers=_auth_header(admin_tokens["access_token"]),
-            json={"permissions": [{"user_id": user_id, "role": "viewer"}]},
+            json={
+                "permissions": [
+                    {"user_id": admin_tokens["user"]["id"], "role": "owner"},
+                    {"user_id": user_id, "role": "viewer"},
+                ]
+            },
         )
 
         user_tokens = _login(client, "viewer_user", "user-pass")
@@ -500,20 +566,24 @@ class TestKnowledgeBasePermissionBoundary:
 
     def test_admin_can_manage_all_knowledge_bases(self) -> None:
         _seed_admin()
-        _seed_user("kb_owner_user")
+        user_id = _seed_user("kb_owner_user")
         client = TestClient(create_app())
 
-        # Login as regular user, create a KB
-        user_tokens = _login(client, "kb_owner_user", "user-pass")
+        # Create KB as admin, then transfer owner permission to a regular user.
+        admin_tokens = _login(client)
         create_resp = client.post(
             "/api/v2/knowledge-bases",
-            headers=_auth_header(user_tokens["access_token"]),
+            headers=_auth_header(admin_tokens["access_token"]),
             json={"name": "用户创建的KB"},
         )
         kb_id = create_resp.json()["id"]
+        client.put(
+            f"/api/v2/knowledge-bases/{kb_id}/permissions",
+            headers=_auth_header(admin_tokens["access_token"]),
+            json={"permissions": [{"user_id": user_id, "role": "owner"}]},
+        )
 
         # Admin can view it
-        admin_tokens = _login(client)
         resp = client.get(
             f"/api/v2/knowledge-bases/{kb_id}",
             headers=_auth_header(admin_tokens["access_token"]),
@@ -560,7 +630,12 @@ class TestKnowledgeBasePermissionBoundary:
         client.put(
             f"/api/v2/knowledge-bases/{kb1_id}/permissions",
             headers=_auth_header(admin_tokens["access_token"]),
-            json={"permissions": [{"user_id": user_id, "role": "viewer"}]},
+            json={
+                "permissions": [
+                    {"user_id": admin_tokens["user"]["id"], "role": "owner"},
+                    {"user_id": user_id, "role": "viewer"},
+                ]
+            },
         )
 
         # Regular user should only see KB-1
@@ -816,7 +891,7 @@ class TestKnowledgeBasePermissionManagement:
         assert resp.status_code == 400
         assert "重复用户" in resp.json()["detail"]
 
-    def test_owner_can_list_permission_candidates(self) -> None:
+    def test_admin_can_list_permission_candidates(self) -> None:
         _seed_admin()
         _seed_user("candidate_user")
         client = TestClient(create_app())
@@ -837,6 +912,49 @@ class TestKnowledgeBasePermissionManagement:
         usernames = {item["username"] for item in resp.json()}
         assert "candidate_user" in usernames
 
+    def test_regular_owner_cannot_manage_permissions(self) -> None:
+        _seed_admin()
+        owner_id = _seed_user("regular_perm_owner")
+        client = TestClient(create_app())
+        admin_tokens = _login(client)
+
+        create_resp = client.post(
+            "/api/v2/knowledge-bases",
+            headers=_auth_header(admin_tokens["access_token"]),
+            json={"name": "普通Owner权限边界"},
+        )
+        kb_id = create_resp.json()["id"]
+        client.put(
+            f"/api/v2/knowledge-bases/{kb_id}/permissions",
+            headers=_auth_header(admin_tokens["access_token"]),
+            json={
+                "permissions": [
+                    {"user_id": admin_tokens["user"]["id"], "role": "owner"},
+                    {"user_id": owner_id, "role": "owner"},
+                ]
+            },
+        )
+
+        owner_tokens = _login(client, "regular_perm_owner", "user-pass")
+        resp = client.get(
+            f"/api/v2/knowledge-bases/{kb_id}/permission-candidates",
+            headers=_auth_header(owner_tokens["access_token"]),
+        )
+        assert resp.status_code == 403
+        assert "需要管理员权限" in resp.json()["detail"]
+
+        resp = client.put(
+            f"/api/v2/knowledge-bases/{kb_id}/permissions",
+            headers=_auth_header(owner_tokens["access_token"]),
+            json={
+                "permissions": [
+                    {"user_id": owner_id, "role": "owner"},
+                ]
+            },
+        )
+        assert resp.status_code == 403
+        assert "需要管理员权限" in resp.json()["detail"]
+
 
 # ── Admin Knowledge Base Management ────────────────────────────────────
 
@@ -847,16 +965,49 @@ class TestAdminKnowledgeBase:
         client = TestClient(create_app())
         tokens = _login(client)
 
-        client.post(
+        kb_resp = client.post(
             "/api/v2/knowledge-bases",
             headers=_auth_header(tokens["access_token"]),
             json={"name": "Admin-KB-1"},
         )
+        kb_id = kb_resp.json()["id"]
         client.post(
             "/api/v2/knowledge-bases",
             headers=_auth_header(tokens["access_token"]),
             json={"name": "Admin-KB-2"},
         )
+
+        async def _add_documents() -> None:
+            async with AsyncSessionLocal() as session:
+                session.add_all(
+                    [
+                        Document(
+                            knowledge_base_id=kb_id,
+                            uploader_id=tokens["user"]["id"],
+                            title="可用文档",
+                            filename="ready.pdf",
+                            mime="application/pdf",
+                            size_bytes=10,
+                            sha256="ready-sha",
+                            storage_path="uploads/ready.pdf",
+                            status="ready",
+                        ),
+                        Document(
+                            knowledge_base_id=kb_id,
+                            uploader_id=tokens["user"]["id"],
+                            title="已删除文档",
+                            filename="deleted.pdf",
+                            mime="application/pdf",
+                            size_bytes=10,
+                            sha256="deleted-sha",
+                            storage_path="uploads/deleted.pdf",
+                            status="disabled",
+                        ),
+                    ]
+                )
+                await session.commit()
+
+        asyncio.run(_add_documents())
 
         resp = client.get(
             "/api/v2/admin/knowledge-bases",
@@ -865,6 +1016,14 @@ class TestAdminKnowledgeBase:
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] == 2
+        first = next(item for item in data["items"] if item["id"] == kb_id)
+        assert first["document_count"] == 2
+        assert first["active_document_count"] == 1
+        assert first["permission_count"] == 1
+        assert first["creator_id"] == tokens["user"]["id"]
+        assert first["creator_username"] == "admin"
+        assert first["creator_name"] == "系统管理员"
+        assert first["deleted_at"] is None
 
     def test_admin_list_kbs_search(self) -> None:
         _seed_admin()

@@ -29,6 +29,8 @@ export function disableKnowledgeBase(kbId: string) {
   return apiClient.delete<KnowledgeBaseOut>(`/knowledge-bases/${kbId}`)
 }
 
+export const deleteKnowledgeBase = disableKnowledgeBase
+
 export function listPermissions(kbId: string) {
   return apiClient.get<PermissionOut[]>(`/knowledge-bases/${kbId}/permissions`)
 }
@@ -56,4 +58,15 @@ export function adminListKnowledgeBases(params: {
 
 export function adminListPermissions(kbId: string) {
   return apiClient.get<PermissionOut[]>(`/admin/knowledge-bases/${kbId}/permissions`)
+}
+
+export function adminListPermissionCandidates(kbId: string, params?: { search?: string }) {
+  return apiClient.get<PermissionUserOut[]>(
+    `/admin/knowledge-bases/${kbId}/permission-candidates`,
+    { params },
+  )
+}
+
+export function adminUpdatePermissions(kbId: string, data: PermissionUpdateRequest) {
+  return apiClient.put<PermissionOut[]>(`/admin/knowledge-bases/${kbId}/permissions`, data)
 }

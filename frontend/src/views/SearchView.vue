@@ -73,7 +73,6 @@ async function doExport() {
 
 onMounted(async () => {
   store.loadHotKeywords()
-  store.loadDocTypes()
   try {
     const { data } = await listKnowledgeBases({ page: 1, page_size: 100 })
     kbList.value = data.items
@@ -108,22 +107,6 @@ onUnmounted(() => {
       <ElSelect v-model="store.kbId" placeholder="全部知识库" clearable>
         <ElOption v-for="kb in kbList" :key="kb.id" :label="kb.name" :value="kb.id" />
       </ElSelect>
-      <ElSelect v-model="store.docKind" placeholder="文档类型" clearable>
-        <ElOption
-          v-for="dt in store.docKinds"
-          :key="dt.doc_kind"
-          :label="dt.doc_kind"
-          :value="dt.doc_kind"
-        />
-      </ElSelect>
-      <ElSelect v-model="store.schemeType" placeholder="方案类型" clearable>
-        <ElOption
-          v-for="st in store.schemeTypes"
-          :key="st.scheme_type"
-          :label="st.scheme_type"
-          :value="st.scheme_type"
-        />
-      </ElSelect>
       <ElSelect v-model="store.sortBy" style="width: 120px">
         <ElOption label="相关度" value="relevance" />
         <ElOption label="时间" value="date" />
@@ -134,7 +117,7 @@ onUnmounted(() => {
       >
     </section>
 
-    <section v-if="store.hotKeywords.length || store.docKinds.length" class="quick-filters">
+    <section v-if="store.hotKeywords.length" class="quick-filters">
       <div v-if="store.hotKeywords.length" class="filter-group">
         <span class="filter-label">热词：</span>
         <ElTag
@@ -144,18 +127,6 @@ onUnmounted(() => {
           @click="store.applyKeyword(kw.keyword)"
         >
           {{ kw.keyword }}
-        </ElTag>
-      </div>
-      <div v-if="store.docKinds.length" class="filter-group">
-        <span class="filter-label">类型：</span>
-        <ElTag
-          v-for="dt in store.docKinds"
-          :key="dt.doc_kind"
-          :type="store.docKind === dt.doc_kind ? undefined : 'info'"
-          class="clickable-tag"
-          @click="store.applyDocKind(dt.doc_kind)"
-        >
-          {{ dt.doc_kind }} ({{ dt.count }})
         </ElTag>
       </div>
     </section>

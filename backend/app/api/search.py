@@ -18,7 +18,6 @@ from app.schemas.search import (
     ExportRequest,
     HotKeywordItem,
     HotKeywordsResponse,
-    SchemeTypeCount,
     SearchHitOut,
     SearchRequest,
     SearchResponse,
@@ -42,8 +41,6 @@ async def search_documents(
     filters: dict[str, object] = {}
     if body.doc_kind:
         filters["doc_kind"] = body.doc_kind
-    if body.scheme_type:
-        filters["scheme_type"] = body.scheme_type
     if body.content_type:
         filters["content_type"] = body.content_type
     if body.date_from:
@@ -110,10 +107,9 @@ async def doc_types(
     db: DbSession,
 ) -> DocTypesResponse:
     svc = SearchService(db)
-    doc_kinds, scheme_types = await svc.doc_types(user)
+    doc_kinds = await svc.doc_types(user)
     return DocTypesResponse(
         doc_kinds=[DocTypeCount(doc_kind=k, count=c) for k, c in doc_kinds],
-        scheme_types=[SchemeTypeCount(scheme_type=s, count=c) for s, c in scheme_types],
     )
 
 
@@ -132,7 +128,6 @@ async def create_export(
             "query": body.query,
             "kb_id": body.kb_id,
             "doc_kind": body.doc_kind,
-            "scheme_type": body.scheme_type,
             "content_type": body.content_type,
             "date_from": body.date_from,
             "date_to": body.date_to,

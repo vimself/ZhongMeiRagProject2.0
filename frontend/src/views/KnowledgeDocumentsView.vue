@@ -44,7 +44,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import {
-  disableDocument,
+  deleteDocument,
   getDocument,
   getIngestProgress,
   listDocuments,
@@ -52,16 +52,17 @@ import {
   uploadDocument,
 } from '@/api/document'
 import { getKnowledgeBase } from '@/api/knowledge'
-import { signAssetToken } from '@/api/pdfPreview'
+import { pdfPreviewUrl, signAssetToken, signPdfToken } from '@/api/pdfPreview'
 import type { AssetOut, DocumentDetailResponse, DocumentOut, IngestJobProgress } from '@/api/types'
-import PdfViewer from '@/components/PdfViewer.vue'
-import { usePdfPreview } from '@/composables/usePdfPreview'
 
 const route = useRoute()
 const router = useRouter()
 type UploadAjaxLikeError = Error & { status: number; method: string; url: string }
 const kbId = computed(() => String(route.params.kbId))
 const kbName = ref('')
+const kbRole = ref<string | null>(null)
+const canUpload = computed(() => ['admin', 'owner', 'editor'].includes(kbRole.value || ''))
+const canDelete = computed(() => ['admin', 'owner'].includes(kbRole.value || ''))
 
 const docs = ref<DocumentOut[]>([])
 const total = ref(0)
@@ -78,9 +79,6 @@ const timers = new Map<string, number>()
 const drawerVisible = ref(false)
 const detailLoading = ref(false)
 const detail = ref<DocumentDetailResponse | null>(null)
-
-const pdfDrawerVisible = ref(false)
-const pdfPreview = usePdfPreview()
 
 const statusOptions = [
   { label: '全部状态', value: '' },
@@ -115,7 +113,7 @@ function statusLabel(status: string): string {
     indexing: '索引',
     ready: '完成',
     failed: '失败',
-    disabled: '停用',
+    disabled: '已删除',
   }
   return map[status] || status
 }
@@ -146,6 +144,7 @@ function progressOf(row: DocumentOut): number {
 async function loadKnowledgeBase() {
   const resp = await getKnowledgeBase(kbId.value)
   kbName.value = resp.data.name
+  kbRole.value = resp.data.my_role
 }
 
 async function loadDocuments() {
@@ -221,15 +220,32 @@ async function openDetail(row: DocumentOut) {
   }
 }
 
-async function openPdfPreview(row: DocumentOut, page?: number) {
-  pdfDrawerVisible.value = true
-  await pdfPreview.openPreview(row.id, page)
+function withPdfPageHash(url: string, page = 1): string {
+  return `${url}#page=${page}`
+}
+
+async function openPdfPreview(row: DocumentOut) {
+  const previewWindow = window.open('about:blank', '_blank')
+  if (previewWindow) {
+    previewWindow.opener = null
+  }
+  try {
+    const { data } = await signPdfToken(row.id)
+    const url = withPdfPageHash(pdfPreviewUrl(data.document_id, data.token), 1)
+    if (previewWindow) {
+      previewWindow.location.href = url
+    } else {
+      window.open(url, '_blank')
+    }
+  } catch (err) {
+    previewWindow?.close()
+    ElMessage.error('PDF 预览链接签发失败：' + (err as Error).message)
+  }
 }
 
 async function openDetailPdfPreview() {
   if (!detail.value) return
-  pdfDrawerVisible.value = true
-  await pdfPreview.openPreview(detail.value.id)
+  await openPdfPreview(detail.value)
 }
 
 async function openAssetPreview(asset: AssetOut) {
@@ -251,22 +267,26 @@ async function handleRetry(row: DocumentOut) {
   }
 }
 
-async function handleDisable(row: DocumentOut) {
+async function handleDelete(row: DocumentOut) {
   try {
-    await ElMessageBox.confirm(`确定停用文档 "${row.title}" 吗？`, '停用文档', {
-      confirmButtonText: '确定停用',
-      cancelButtonText: '取消',
-      type: 'warning',
-    })
+    await ElMessageBox.confirm(
+      `确定要删除文档 "${row.title}" 吗？删除后将从知识库列表、搜索和问答中移除。后台会保留审计记录，当前不提供恢复入口。`,
+      '删除文档',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
   } catch {
     return
   }
   try {
-    await disableDocument(row.id)
-    ElMessage.success('文档已停用')
+    await deleteDocument(row.id)
+    ElMessage.success('文档已删除')
     await loadDocuments()
   } catch {
-    ElMessage.error('停用失败')
+    ElMessage.error('删除失败')
   }
 }
 
@@ -331,8 +351,9 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <section class="toolbar">
+    <section class="toolbar" :class="{ 'toolbar--filters-only': !canUpload }">
       <ElUpload
+        v-if="canUpload"
         drag
         accept="application/pdf,.pdf"
         :show-file-list="false"
@@ -420,7 +441,7 @@ onUnmounted(() => {
                 预览
               </ElButton>
               <ElButton
-                v-if="row.status === 'failed'"
+                v-if="canDelete && row.status === 'failed'"
                 text
                 size="small"
                 type="warning"
@@ -428,8 +449,15 @@ onUnmounted(() => {
               >
                 重试
               </ElButton>
-              <ElButton :icon="Delete" text size="small" type="danger" @click="handleDisable(row)">
-                停用
+              <ElButton
+                v-if="canDelete"
+                :icon="Delete"
+                text
+                size="small"
+                type="danger"
+                @click="handleDelete(row)"
+              >
+                删除
               </ElButton>
             </div>
           </template>
@@ -499,30 +527,6 @@ onUnmounted(() => {
         </template>
       </div>
     </ElDrawer>
-
-    <ElDrawer
-      v-model="pdfDrawerVisible"
-      title="PDF 预览"
-      size="80%"
-      :before-close="
-        () => {
-          pdfPreview.closePreview()
-          pdfDrawerVisible = false
-        }
-      "
-    >
-      <div v-if="pdfPreview.loading.value" class="pdf-drawer-loading">加载中...</div>
-      <div v-else-if="pdfPreview.error.value" class="pdf-drawer-error">
-        {{ pdfPreview.error.value }}
-      </div>
-      <PdfViewer
-        v-else-if="pdfPreview.pdfUrl.value"
-        :url="pdfPreview.pdfUrl.value"
-        :initial-page="pdfPreview.currentPage.value"
-        :highlight-bbox="pdfPreview.highlightBbox.value"
-        @page-change="pdfPreview.onPageChange"
-      />
-    </ElDrawer>
   </main>
 </template>
 
@@ -567,6 +571,10 @@ onUnmounted(() => {
   gap: 16px;
   align-items: stretch;
   margin-bottom: 14px;
+}
+
+.toolbar--filters-only {
+  grid-template-columns: 1fr;
 }
 
 .upload-inline {
@@ -723,16 +731,6 @@ onUnmounted(() => {
 
 .asset-item small {
   color: #64748b;
-}
-
-.pdf-drawer-loading,
-.pdf-drawer-error {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 300px;
-  color: #64748b;
-  font-size: 15px;
 }
 
 @media (width <= 860px) {

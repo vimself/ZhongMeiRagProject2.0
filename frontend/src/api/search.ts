@@ -29,7 +29,6 @@ export interface SearchParams {
   query: string
   kb_id?: string
   doc_kind?: string
-  scheme_type?: string
   content_type?: string
   date_from?: string
   date_to?: string
@@ -52,14 +51,8 @@ export interface DocTypeCount {
   count: number
 }
 
-export interface SchemeTypeCount {
-  scheme_type: string
-  count: number
-}
-
 export interface DocTypesResponse {
   doc_kinds: DocTypeCount[]
-  scheme_types: SchemeTypeCount[]
 }
 
 export interface ExportJobOut {

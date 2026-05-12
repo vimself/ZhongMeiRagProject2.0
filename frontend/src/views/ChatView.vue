@@ -19,11 +19,11 @@ import { useRoute, useRouter } from 'vue-router'
 
 import type { ChatCitation } from '@/api/chat'
 import { listKnowledgeBases } from '@/api/knowledge'
+import { pdfPreviewUrl, signPdfToken } from '@/api/pdfPreview'
 import type { KnowledgeBaseOut } from '@/api/types'
 import CitationPane from '@/features/chat/CitationPane.vue'
 import Composer from '@/features/chat/Composer.vue'
 import MessageList from '@/features/chat/MessageList.vue'
-import PreviewModal from '@/features/chat/PreviewModal.vue'
 import { useChatStore } from '@/stores/chat'
 
 const router = useRouter()
@@ -34,17 +34,16 @@ const kbList = ref<KnowledgeBaseOut[]>([])
 const loadingKb = ref(false)
 const scrollerRef = ref<HTMLDivElement>()
 
-const activeCitation = ref<ChatCitation | null>(null)
-const previewVisible = ref(false)
-
 const activeKbName = computed(() => {
   if (!chat.activeKbId) return ''
   return kbList.value.find((k) => k.id === chat.activeKbId)?.name || ''
 })
 
+const hasEvidence = computed(() => chat.latestReferences.length > 0)
+
 const emptyHint = computed(() => {
   if (!chat.activeKbId) return '请先选择左上角的知识库，再开始提问。'
-  if (chat.messages.length === 0) return '向当前知识库发起提问，右侧会展示检索到的引用。'
+  if (chat.messages.length === 0) return '向当前知识库发起提问，回答完成后会展示可用依据。'
   return ''
 })
 
@@ -116,9 +115,28 @@ async function handleSubmit(question: string) {
   await chat.fetchSessions()
 }
 
-function openCitation(citation: ChatCitation) {
-  activeCitation.value = citation
-  previewVisible.value = true
+function withPdfPageHash(url: string, page?: number | null): string {
+  if (!page || page < 1) return url
+  return `${url}#page=${page}`
+}
+
+async function openCitation(citation: ChatCitation) {
+  const previewWindow = window.open('about:blank', '_blank')
+  if (previewWindow) {
+    previewWindow.opener = null
+  }
+  try {
+    const { data } = await signPdfToken(citation.document_id)
+    const url = withPdfPageHash(pdfPreviewUrl(data.document_id, data.token), citation.page_start)
+    if (previewWindow) {
+      previewWindow.location.href = url
+    } else {
+      window.open(url, '_blank')
+    }
+  } catch (err) {
+    previewWindow?.close()
+    ElMessage.error('PDF 预览链接签发失败：' + (err as Error).message)
+  }
 }
 
 watch(
@@ -131,6 +149,12 @@ watch(
   () => scrollToBottom(),
 )
 
+watch(
+  () =>
+    chat.messages.map((m) => `${m.content.length}:${m.reasoningContent?.length ?? 0}`).join('|'),
+  () => scrollToBottom(),
+)
+
 onMounted(async () => {
   await loadKnowledgeBases()
   await chat.fetchSessions()
@@ -138,7 +162,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="chat-shell">
+  <div class="chat-shell" :class="{ 'chat-shell--with-evidence': hasEvidence }">
     <aside class="chat-sidebar">
       <header class="chat-sidebar__head">
         <ElButton text size="small" :icon="ArrowLeft" @click="router.push('/')">返回首页</ElButton>
@@ -233,17 +257,12 @@ onMounted(async () => {
           <div class="chat-empty__title">工程 RAG 问答</div>
           <div class="chat-empty__subtitle">{{ emptyHint }}</div>
           <ul class="chat-empty__hints">
-            <li>回答由所选知识库的检索结果生成，每个结论都带有可追溯引用。</li>
-            <li>点击 ^[n] 角标可查看证据并高亮原文位置。</li>
+            <li>回答由所选知识库的检索结果生成，正文会优先展示可读结论。</li>
+            <li>参考文档会在答案下方汇总，右侧证据面板可打开 PDF 预览。</li>
             <li>无依据时将返回「未找到依据」，不编造内容。</li>
           </ul>
         </div>
-        <MessageList
-          v-else
-          :messages="chat.messages"
-          :streaming="chat.streaming"
-          @open-citation="openCitation"
-        />
+        <MessageList v-else :messages="chat.messages" :streaming="chat.streaming" />
         <div v-if="chat.error" class="chat-main__error">{{ chat.error }}</div>
       </div>
 
@@ -256,20 +275,19 @@ onMounted(async () => {
     </main>
 
     <CitationPane
+      v-if="hasEvidence"
       class="chat-rightpane"
       :references="chat.latestReferences"
-      :loading="chat.streaming && chat.latestReferences.length === 0"
+      :loading="false"
       @open="openCitation"
     />
-
-    <PreviewModal v-model="previewVisible" :citation="activeCitation" />
   </div>
 </template>
 
 <style scoped>
 .chat-shell {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) 360px;
+  grid-template-columns: 280px minmax(0, 1fr);
   height: 100vh;
   min-height: 600px;
   background: #fafaf9;
@@ -277,6 +295,10 @@ onMounted(async () => {
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
     'Microsoft YaHei', sans-serif;
+}
+
+.chat-shell--with-evidence {
+  grid-template-columns: 280px minmax(0, 1fr) 360px;
 }
 
 .chat-sidebar {
@@ -450,6 +472,8 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   background: #fafaf9;
 }
 
@@ -524,6 +548,10 @@ onMounted(async () => {
   flex-direction: column;
 }
 
+.chat-main :deep(.composer) {
+  flex-shrink: 0;
+}
+
 .chat-empty {
   max-width: 620px;
   margin: 14vh auto 0;
@@ -583,8 +611,12 @@ onMounted(async () => {
 }
 
 @media (width <= 1100px) {
-  .chat-shell {
+  .chat-shell--with-evidence {
     grid-template-columns: 240px minmax(0, 1fr) 320px;
+  }
+
+  .chat-shell {
+    grid-template-columns: 240px minmax(0, 1fr);
   }
 }
 

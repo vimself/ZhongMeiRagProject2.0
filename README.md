@@ -34,18 +34,21 @@ Copy-Item .env.example .env
 ADMIN_SEED_USERNAME=admin
 ADMIN_SEED_PASSWORD=Admin@123456
 ADMIN_SEED_DISPLAY_NAME=系统管理员
+USER_SEED_USERNAME=user
+USER_SEED_PASSWORD=User@123456
+USER_SEED_DISPLAY_NAME=普通用户
 DASHSCOPE_API_KEY=你的阿里云DashScopeKey
 ```
 
 本地测试账号建议使用：
 
-- 初始用户名：`admin`
-- 初始密码：`Admin@123456`
+- 管理员账号：`admin` / `Admin@123456`
+- 普通用户账号：`user` / `User@123456`
 
 说明：
 
-- `ADMIN_SEED_PASSWORD` 是初始化管理员密码。你也可以改成自己的密码。
-- `Admin@123456` 只用于本地测试；正式部署必须换成强密码。
+- `ADMIN_SEED_PASSWORD` 和 `USER_SEED_PASSWORD` 是默认双账号初始化密码。你也可以改成自己的密码。
+- 示例密码只用于本地测试；正式部署必须换成强密码。
 - `DASHSCOPE_API_KEY` 用于 RAG 问答和 embedding。只测试登录、用户管理、知识库页面时可以先不填；要测试文档入库和问答，建议配置真实 key。
 - `.env.example` 只是模板，Docker Compose 实际读取 `.env`。
 
@@ -75,20 +78,18 @@ docker compose ps
 - Grafana：http://localhost:3000
 - SeekDB Dashboard：http://localhost:12886
 
-## 4. 创建初始管理员账号
+## 4. 默认账号初始化
 
-后端容器启动后，执行：
+后端容器启动时会自动执行迁移，并初始化默认双账号：
+
+- `admin`：管理员账号。
+- `user`：普通用户账号。
+
+初始化脚本会清理其他无效用户记录，数据库最终只保留上述两个用户。若需要手动重新执行：
 
 ```powershell
-docker compose exec -T api python -m app.cli.seed_admin
+docker compose exec -T api python -m app.cli.seed_default_users
 ```
-
-这条命令会按 `.env` 里的配置创建或重置管理员账号。
-
-默认测试登录信息：
-
-- 用户名：`admin`
-- 密码：`Admin@123456`
 
 首次登录后系统可能要求修改密码，这是正常行为。
 
@@ -115,10 +116,10 @@ npm run dev
 http://localhost:5173
 ```
 
-使用上面的管理员账号登录：
+使用上面的默认账号登录：
 
-- 用户名：`admin`
-- 密码：`Admin@123456`
+- 管理员账号：`admin` / `Admin@123456`
+- 普通用户账号：`user` / `User@123456`
 
 前端请求会通过 Vite 代理转发到后端 `http://localhost:8000`，不需要手动改 API 地址。
 
@@ -177,10 +178,10 @@ docker compose down
 docker compose up --build -d
 ```
 
-重新初始化管理员密码：
+重新初始化默认用户：
 
 ```powershell
-docker compose exec -T api python -m app.cli.seed_admin
+docker compose exec -T api python -m app.cli.seed_default_users --reset-passwords
 ```
 
 ## 8. 本地开发验证
@@ -216,14 +217,14 @@ npm run dev
 
 ### 登录提示账号不存在或密码错误
 
-重新执行管理员初始化：
+重新执行默认用户初始化：
 
 ```powershell
 cd E:\ZhongMeiRagProject_v2.0
-docker compose exec -T api python -m app.cli.seed_admin
+docker compose exec -T api python -m app.cli.seed_default_users --reset-passwords
 ```
 
-然后用 `.env` 里的 `ADMIN_SEED_USERNAME` 和 `ADMIN_SEED_PASSWORD` 登录。
+然后用 `.env` 里的 `ADMIN_SEED_*` 或 `USER_SEED_*` 配置登录。
 
 ### API 不健康
 

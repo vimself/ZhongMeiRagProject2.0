@@ -84,6 +84,10 @@ function handleStop() {
 
 <style scoped>
 .composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  flex-shrink: 0;
   padding: 14px 20px 18px;
   background: linear-gradient(180deg, rgb(250 250 249 / 0%) 0%, #fafaf9 45%);
 }

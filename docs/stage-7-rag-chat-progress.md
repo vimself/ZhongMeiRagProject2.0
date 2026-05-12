@@ -12,12 +12,14 @@ DashScope 流式生成、无命中兜底、会话历史、引用预览 token 重
 - 后端 LangGraph 风格节点化 RAG pipeline，覆盖 plan_query → retrieve_track_a/b
   → rrf_fusion → dedupe_citations → should_answer → generate_stream →
   rewrite_citations → persist。
-- SSE 聊天 API `POST /api/v2/chat/stream`，依次下发 `references` / `content`
-  / `done` / `error` 事件。
+- SSE 聊天 API `POST /api/v2/chat/stream`，依次下发 `status` / `references`
+  / 可选 `reasoning` / `content` / `done` / `error` 事件。
 - 会话历史 API：`GET /api/v2/chat/sessions` 列表、
   `GET /api/v2/chat/sessions/{id}` 详情（每次调用都重新签发引用
   `preview_url` / `download_url`，不持久化短时 token）、
   `DELETE /api/v2/chat/sessions/{id}` 软删除。
+- 历史会话详情按 `created_at`、同时间戳下 `user → assistant → system`
+  顺序返回；新对话轮次落库时显式让用户消息早于模型回答，避免刷新后上下错乱。
 - 数据库新增 `chat_sessions` / `chat_messages` / `chat_message_citations`
   / `rag_eval_runs`，Alembic 迁移 `20260510_stage_6_pdf_preview_rag.py`
   随 Stage 6 并入，Stage 7 迁移位于 Stage 6 迁移之后。
@@ -29,7 +31,7 @@ DashScope 流式生成、无命中兜底、会话历史、引用预览 token 重
   `sparse_native SPARSEVECTOR` + SINDI、`content` + NGRAM FULLTEXT，同时保留
   JSON `vector`/`sparse` fallback。
 - 前端新增 `views/ChatView.vue` 与 `features/chat/*`（MessageList、
-  Composer、CitationCard、CitationPane、PreviewModal），路由 `/chat`，
+  Composer、CitationCard、CitationPane），路由 `/chat`，
   首页 RAG 问答卡片直达。
 - 评测骨架 `eval/ragas_runbook.py` + 20 条中文工程金标数据
   `eval/golden_cases.json`，支持启发式指标 + 可选 ragas。
@@ -51,15 +53,23 @@ DashScope 流式生成、无命中兜底、会话历史、引用预览 token 重
 
 响应为 `text/event-stream`，严格依次推送：
 
-1. `event: references`
+1. `event: status`
+   ```json
+   { "stage": "retrieving", "message": "正在检索证据" }
+   ```
+2. `event: references`
    ```json
    { "session_id": "…", "references": [ ChatCitation, … ] }
    ```
-2. `event: content`
+3. `event: reasoning`（仅开启思考模式时出现）
    ```json
    { "delta": "……" }
    ```
-3. `event: done`
+4. `event: content`
+   ```json
+   { "delta": "……" }
+   ```
+5. `event: done`
    ```json
    {
      "session_id": "…",
@@ -69,7 +79,7 @@ DashScope 流式生成、无命中兜底、会话历史、引用预览 token 重
      "min_score_threshold": 0.05
    }
    ```
-4. 任意环节失败 → `event: error` `{ "message": "…" }`。
+6. 任意环节失败 → `event: error` `{ "message": "…" }`。
 
 `ChatCitation` 字段（12 项）：
 
@@ -81,8 +91,8 @@ bbox{x,y,width,height}, snippet, score, preview_url, download_url
 
 - `preview_url` / `download_url` 为 **短时 token**，每次读取会话详情/流式
   回答都会 **重新签发**（5 min 有效），不落库。
-- `content` 里的 `[cite:i]` 将在 `rewrite_citations` 节点统一改写为
-  `^[n]`，`n` 与 references 中的 `index` 对应。
+- `content` 里的 `[cite:i]`、`^[n]`、`[^n]` 会在 `rewrite_citations`
+  节点移除；引用由右侧证据面板和回答完成后的参考文档区单独展示。
 
 ### 历史会话
 
@@ -102,7 +112,7 @@ bbox{x,y,width,height}, snippet, score, preview_url, download_url
 | `dedupe_citations` | 按 `document_id+section_path+page_start` 去重 |
 | `should_answer` | 若 `max(score) < chat_min_score_threshold` 则走无命中兜底 |
 | `generate_stream` | DashScope 流式生成，429 自动降级到 `qwen3-turbo` |
-| `rewrite_citations` | `[cite:i]` → `^[n]`，只保留实际命中的引用 |
+| `rewrite_citations` | 移除模型输出中的 `[cite:i]`/`^[n]`/`[^n]` 引用角标 |
 | `persist` | 写入 `chat_sessions/messages/citations`，引用仅保存稳定元数据 |
 
 无命中兜底：`chat_no_hit_message`，默认为 **「无法在知识库中找到依据，建议
@@ -114,13 +124,24 @@ bbox{x,y,width,height}, snippet, score, preview_url, download_url
 - 布局：三栏
   - 左侧 `chat-sidebar`：返回首页 / 知识库下拉 / 新建对话 / 历史会话列表。
   - 中间 `chat-main`：顶部状态条、消息滚动区、底部 `Composer`。
-  - 右侧 `CitationPane`：实时证据面板，hover 可点开 `PreviewModal`。
+  - 右侧 `CitationPane`：实时证据面板，点击可打开浏览器原生 PDF 预览页。
 - 引用交互：
-  - 内容中的 `^[n]` 渲染为 `.cite-chip`（圆角胶囊）。
-  - `hover` → `ElPopover` 展示紧凑 `CitationCard`。
-  - `click` → `PreviewModal`，左侧复用 Stage 6 `PdfViewer`，按
-    `page_start + bbox` 高亮原文；右侧展示文档、章节路径、页码、
-    相关度、snippet、下载原文按钮。
+  - 答案正文不展示 `^[n]` 或悬浮引用卡片，避免打断阅读。
+  - `references` SSE 事件只暂存，不立即渲染；收到 `done` 后按
+    `finish_reason` 和引用数量统一决策是否展示引用。
+  - 回答框参考文档与右侧证据面板深度绑定：有依据时两者同时出现，
+    无命中（`finish_reason=no_hit` 或正文为无依据兜底）时两者同时不显示。
+  - 如果检索命中了片段但模型最终回答“无法在知识库中找到依据”，后端会在
+    `done` 前把本轮视为 `finish_reason=no_hit`，并且不持久化本轮引用。
+  - 有依据时，回答流式输出结束后在正文下方按 `document_id` 去重展示参考文档纯文本，
+    格式为 `文件名：第3.0.4条、3.0.5条。`；该区域不提供点击跳转。
+  - 右侧证据面板与回答框参考文档使用同一套文档分组和条文号升序规则展示。
+  - 点击右侧证据 → 前端同步打开新标签页，再调用
+    `/api/v2/pdf/sign` 签发短时 token，最终跳转到
+    `/api/v2/pdf/preview?document_id=...&token=...#page=N`，使用浏览器原生
+    PDF 阅读器预览，避免聊天页自定义 PDF 组件状态影响。
+  - `MessageList` 会把常见 OCR/LaTeX 片段（如 `$5^{\circ}C \sim 35^{\circ}C$`）
+    转为面向用户的 `5°C 至 35°C` 形式，再按 Markdown 渲染。
 - 状态管理：`stores/chat.ts`（Pinia），含
   `sessions/activeSessionId/activeKbId/messages/latestReferences/
   streaming/error/abortController`。`sendQuestion` 通过
@@ -135,6 +156,7 @@ bbox{x,y,width,height}, snippet, score, preview_url, download_url
 ```
 DASHSCOPE_CHAT_MODEL=qwen3.6-plus
 DASHSCOPE_CHAT_MODEL_FALLBACK=qwen3-turbo
+DASHSCOPE_CHAT_ENABLE_THINKING=false
 DASHSCOPE_NATIVE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
 DASHSCOPE_EMBEDDING_MODEL=qwen3-vl-embedding
 DASHSCOPE_EMBEDDING_DIMENSION=1024

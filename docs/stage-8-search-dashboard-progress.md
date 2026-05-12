@@ -9,9 +9,9 @@
 ### 后端
 
 - 新增搜索 API：
-  - `POST /api/v2/search/documents` — 全库搜索，支持 query、kb_id、doc_kind、scheme_type、content_type、日期范围、分页、排序。结果包含 Stage 7 引用协议全部字段（chunk_id、document_id、document_title、knowledge_base_id、section_path、section_text、page_start/page_end、bbox、snippet、score、preview_url、download_url），preview/download token 每次请求重新签发。
+  - `POST /api/v2/search/documents` — 全库搜索，支持 query、kb_id、doc_kind、content_type、日期范围、分页、排序。结果包含 Stage 7 引用协议全部字段（chunk_id、document_id、document_title、knowledge_base_id、section_path、section_text、page_start/page_end、bbox、snippet、score、preview_url、download_url），preview/download token 每次请求重新签发。当前搜索页不开放 `doc_kind` 筛选，但后端保留该字段以兼容将来的入库分类能力。
   - `GET /api/v2/search/hot-keywords` — 基于真实数据的关键词聚合，使用 `text_term_weights()` 分词。
-  - `GET /api/v2/search/doc-types` — 文档类型/方案类型聚合统计。
+  - `GET /api/v2/search/doc-types` — 文档类型聚合统计；`doc_kind=other` 表示上传时未指定更细分类的“其他/未分类”文档。
   - `POST /api/v2/search/export` — 异步导出 ZIP 任务。
   - `GET /api/v2/search/export/{job_id}` — 导出任务状态轮询。
   - `GET /api/v2/search/export/{job_id}/download` — 导出文件下载。
@@ -35,7 +35,7 @@
 
 ### 前端
 
-- 新增搜索页 `/search`：筛选栏（query、KB、doc_kind、scheme_type、排序）、热词/类型快捷筛选、结果卡片、分页、空状态、加载态、导出 ZIP 按钮与异步进度。点击结果复用 `PreviewModal`（Stage 6/7）进行 PDF 预览 + bbox 高亮。
+- 新增搜索页 `/search`：筛选栏（query、KB、排序）、热词快捷筛选、结果卡片、分页、空状态、加载态、导出 ZIP 按钮与异步进度。点击结果复用 `PreviewModal`（Stage 6/7）进行 PDF 预览 + bbox 高亮。由于当前上传入口未让用户选择文档类型，搜索页暂不展示文档类型筛选，避免把默认 `other` 误解为系统自动分类结果。
 - 新增管理员仪表板 `/admin/dashboard`：统计概览卡片、7 天文档入库/聊天趋势折线图（ECharts）、文档类型饼图、系统状态灯（绿/红/黄/灰）、最近活动表格。
 - 首页更新：Stage 标识更新到 Stage 8，新增「知识检索」卡片（所有用户）和「系统仪表盘」卡片（仅 admin）。
 - 路由守卫：`/search` 需登录，`/admin/dashboard` 需 admin。

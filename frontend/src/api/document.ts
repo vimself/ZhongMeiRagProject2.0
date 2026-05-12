@@ -60,3 +60,5 @@ export function retryDocument(documentId: string) {
 export function disableDocument(documentId: string) {
   return apiClient.delete<DocumentOut>(`/documents/${documentId}`)
 }
+
+export const deleteDocument = disableDocument

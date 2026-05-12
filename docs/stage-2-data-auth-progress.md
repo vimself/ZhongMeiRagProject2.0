@@ -62,9 +62,16 @@
   - `POST /api/v2/auth/change-password`
   - `GET /api/v2/auth/me`
   - `GET /api/v2/auth/config`
-- 管理员种子脚本：
+- 默认用户种子脚本：
+  - `backend/app/cli/seed_default_users.py`
+  - Docker API 容器迁移完成后通过 `SEED_DEFAULT_USERS=1` 自动执行。
+  - 初始化并保留 `admin` 与 `user` 两个账号，清理其他无效用户记录；有文档或知识库外键引用时先转移到 `admin`。
+  - 对历史脏数据中为空或不属于默认双账号的 `knowledge_bases.creator_id` 进行修复，统一绑定到当前 `admin` 用户 ID。
+  - 手动执行时可加 `--reset-passwords`，按环境变量重置现有默认账号密码。
+- 兼容脚本：
   - `backend/app/cli/seed_admin.py`
-  - 通过 `ADMIN_SEED_USERNAME`、`ADMIN_SEED_PASSWORD`、`ADMIN_SEED_DISPLAY_NAME` 配置。
+  - 继续支持手动重置默认账号密码。
+  - 通过 `ADMIN_SEED_*`、`USER_SEED_*` 与 `DEFAULT_USERS_RESET_PASSWORDS` 配置。
 
 ### 2.3 登录限流 + 审计
 
@@ -165,9 +172,10 @@
 
 后续阶段注意事项：
 
-1. 当前管理员种子脚本不会在 API 容器启动时自动执行。首次部署时需要在迁移完成后显式运行：
-   - `python -m app.cli.seed_admin`
-2. `.env.example` 中的 `ADMIN_SEED_PASSWORD` 与 `JWT_SECRET` 仅为本地示例值，生产环境必须替换。
+1. API 容器启动时会在 Alembic 迁移后自动执行默认用户初始化：
+   - `python -m app.cli.seed_default_users`
+   - 数据库最终只保留 `admin` 与 `user` 两个用户。
+2. `.env.example` 中的 `ADMIN_SEED_PASSWORD`、`USER_SEED_PASSWORD` 与 `JWT_SECRET` 仅为本地示例值，生产环境必须替换。
 3. SQLite 单元测试与 SeekDB/MySQL 协议容器级复验均已通过；后续修改迁移或认证链路时需要同步覆盖两类验证。
 4. slowapi 已作为入口限流基础设施接入，但登录失败次数语义由 Redis 双桶实现。后续如需全局 IP QPS 限制，可在路由层增加独立规则。
 

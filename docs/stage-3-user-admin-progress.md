@@ -159,7 +159,7 @@
 - `docker compose up -d --build` 重新构建并启动 API、Celery workers、beat、Flower 等服务。
 - `docker compose ps` 显示 `api`、`nginx`、`redis`、`seekdb` 均为 healthy，worker/beat/flower 均已启动。
 - `docker compose exec -T api python -m alembic current` 返回 `stage_3_user_admin (head)`。
-- `docker compose exec -T api python -m app.cli.seed_admin` 通过，用于确保本地管理员账号可登录。
+- `docker compose exec -T api python -m app.cli.seed_default_users` 通过，用于确保本地 `admin` / `user` 默认双账号可登录，并清理其他无效用户记录。
 - `http://localhost:8000/readyz` 返回 ready。
 - `http://localhost:8080/healthz` 返回 ok。
 - `http://localhost:8080/readyz` 返回 ready。

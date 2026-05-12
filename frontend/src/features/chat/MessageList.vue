@@ -1,21 +1,17 @@
 <script setup lang="ts">
 import DOMPurify from 'dompurify'
-import ElPopover from 'element-plus/es/components/popover/index.mjs'
-import 'element-plus/theme-chalk/el-popover.css'
 import MarkdownIt from 'markdown-it'
 import { computed } from 'vue'
 
-import type { ChatCitation } from '@/api/chat'
+import {
+  documentReferenceSummaries,
+  formatDocumentReference,
+} from '@/features/chat/citationDisplay'
 import type { LocalChatMessage } from '@/stores/chat'
-import CitationCard from '@/features/chat/CitationCard.vue'
 
 const props = defineProps<{
   messages: LocalChatMessage[]
   streaming?: boolean
-}>()
-
-const emit = defineEmits<{
-  (e: 'open-citation', citation: ChatCitation): void
 }>()
 
 const md = new MarkdownIt({
@@ -24,62 +20,79 @@ const md = new MarkdownIt({
   breaks: true,
 })
 
-interface Segment {
-  type: 'html' | 'cite'
-  html?: string
-  index?: number
+function plainMath(expr: string): string {
+  return expr
+    .replace(/\\text\{([^}]*)\}/g, '$1')
+    .replace(/\^\{\\circ\}\s*([CF])?/gi, '°$1')
+    .replace(/\\circ\s*([CF])?/gi, '°$1')
+    .replace(/\\sim/g, ' 至 ')
+    .replace(/\\leq?/g, '≤')
+    .replace(/\\geq?/g, '≥')
+    .replace(/\\times/g, '×')
+    .replace(/\\cdot/g, '·')
+    .replace(/\\pm/g, '±')
+    .replace(/\\%/g, '%')
+    .replace(/\^\{([^}]*)\}/g, '^$1')
+    .replace(/_\{([^}]*)\}/g, '_$1')
+    .replace(/[{}]/g, '')
+    .replace(/\\([a-zA-Z]+)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
-function splitContent(content: string): Segment[] {
-  if (!content) return []
-  const segments: Segment[] = []
-  const pattern = /\^\[(\d+)\]/g
-  let lastIndex = 0
-  let match: RegExpExecArray | null
-  while ((match = pattern.exec(content)) !== null) {
-    if (match.index > lastIndex) {
-      const chunk = content.slice(lastIndex, match.index)
-      segments.push({ type: 'html', html: DOMPurify.sanitize(md.render(chunk)) })
-    }
-    segments.push({ type: 'cite', index: Number(match[1]) })
-    lastIndex = pattern.lastIndex
-  }
-  if (lastIndex < content.length) {
-    const chunk = content.slice(lastIndex)
-    segments.push({ type: 'html', html: DOMPurify.sanitize(md.render(chunk)) })
-  }
-  return segments
+function normalizeMath(content: string): string {
+  return content
+    .replace(/\$\$([\s\S]*?)\$\$/g, (_, expr: string) => plainMath(expr))
+    .replace(/\$([^$\n]+)\$/g, (_, expr: string) => plainMath(expr))
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_, expr: string) => plainMath(expr))
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_, expr: string) => plainMath(expr))
 }
 
-function citationByIndex(msg: LocalChatMessage, index: number): ChatCitation | null {
-  return msg.citations.find((c) => c.index === index) ?? null
+function stripReferenceSection(content: string): string {
+  const lines = content.split(/\r?\n/)
+  const marker =
+    /^(#{1,6}\s*)?(\*\*)?\s*(引用依据|引用内容|参考文档|参考资料|参考来源|References)\s*[:：]?\s*(\*\*)?\s*$/i
+  const index = lines.findIndex((line) => marker.test(line.trim()))
+  return index >= 0 ? lines.slice(0, index).join('\n') : content
+}
+
+function normalizeAnswerContent(content: string): string {
+  return normalizeMath(stripReferenceSection(content))
+    .replace(/\[cite:\d+\]/g, '')
+    .replace(/\^\[\d+\]/g, '')
+    .replace(/\[\^\d+\]/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function renderContent(content: string): string {
+  return DOMPurify.sanitize(md.render(normalizeAnswerContent(content)))
 }
 
 const items = computed(() =>
   props.messages.map((m) => ({
     raw: m,
-    segments: m.role === 'assistant' ? splitContent(m.content) : [],
+    html: m.role === 'assistant' ? renderContent(m.content) : '',
+    sources: documentReferenceSummaries(m.citations),
   })),
 )
-
-function handleOpen(cite: ChatCitation | null) {
-  if (cite) emit('open-citation', cite)
-}
 </script>
 
 <template>
   <div class="message-list">
-    <template v-for="{ raw: msg, segments } in items" :key="msg.id">
+    <template v-for="{ raw: msg, html, sources } in items" :key="msg.id">
       <div class="message" :class="`message--${msg.role}`">
         <div class="message__meta">
           <span class="message__role">
             {{ msg.role === 'user' ? '你' : msg.role === 'assistant' ? '中煤 RAG' : '系统' }}
           </span>
-          <span v-if="msg.model" class="message__model">{{ msg.model }}</span>
           <span v-if="msg.status === 'error'" class="message__status message__status--error">
             错误
           </span>
-          <span v-else-if="msg.status === 'streaming'" class="message__status"> 生成中… </span>
+          <span v-else-if="msg.status === 'streaming'" class="message__status">
+            {{ msg.progressText || '生成中…' }}
+          </span>
         </div>
 
         <div v-if="msg.role === 'user'" class="message__bubble message__bubble--user">
@@ -87,39 +100,35 @@ function handleOpen(cite: ChatCitation | null) {
         </div>
 
         <div v-else class="message__bubble message__bubble--assistant">
+          <details
+            v-if="msg.reasoningContent"
+            class="message__reasoning"
+            :open="msg.status === 'streaming' && !msg.content"
+          >
+            <summary>
+              <span>思考过程</span>
+              <small>
+                {{ msg.status === 'streaming' && !msg.content ? '实时生成' : '已完成' }}
+              </small>
+            </summary>
+            <div class="message__reasoning-body">{{ msg.reasoningContent }}</div>
+          </details>
+
           <div v-if="!msg.content && msg.status === 'streaming'" class="message__typing">
             <span class="dot" /><span class="dot" /><span class="dot" />
           </div>
-          <div v-else class="markdown-body">
-            <template v-for="(seg, i) in segments" :key="i">
-              <!-- eslint-disable-next-line vue/no-v-html -->
-              <span v-if="seg.type === 'html'" v-html="seg.html" />
-              <ElPopover
-                v-else
-                :width="300"
-                trigger="hover"
-                placement="top"
-                :show-arrow="true"
-                :hide-after="120"
-                :offset="6"
-              >
-                <template #reference>
-                  <button
-                    type="button"
-                    class="cite-chip"
-                    @click="handleOpen(citationByIndex(msg, seg.index!))"
-                  >
-                    ^[{{ seg.index }}]
-                  </button>
-                </template>
-                <CitationCard
-                  v-if="citationByIndex(msg, seg.index!)"
-                  :citation="citationByIndex(msg, seg.index!)!"
-                  compact
-                />
-                <p v-else class="cite-missing">该引用不存在或已失效</p>
-              </ElPopover>
-            </template>
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <div v-else-if="msg.content" class="markdown-body" v-html="html" />
+
+          <div
+            v-if="msg.status === 'done' && sources.length > 0 && msg.content"
+            class="answer-sources"
+          >
+            <div class="answer-sources__head">参考文档</div>
+            <div v-for="source in sources" :key="source.key" class="answer-source">
+              <span class="answer-source__mark" aria-hidden="true" />
+              <span class="answer-source__title">{{ formatDocumentReference(source) }}</span>
+            </div>
           </div>
 
           <div v-if="msg.error" class="message__error">
@@ -204,6 +213,49 @@ function handleOpen(cite: ChatCitation | null) {
 .message__bubble--assistant {
   background: #fff;
   color: #111827;
+  min-width: min(620px, 100%);
+}
+
+.message__reasoning {
+  margin-bottom: 12px;
+  color: #4b5563;
+  background: #fafaf9;
+  border: 1px solid #e7e5e4;
+  border-radius: 8px;
+}
+
+.message__reasoning summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  cursor: pointer;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 600;
+  list-style: none;
+}
+
+.message__reasoning summary::-webkit-details-marker {
+  display: none;
+}
+
+.message__reasoning small {
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.message__reasoning-body {
+  max-height: 180px;
+  padding: 0 10px 10px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  color: #6b7280;
+  font-size: 12.5px;
+  line-height: 1.65;
+  border-top: 1px solid #e7e5e4;
 }
 
 .message__typing {
@@ -253,41 +305,43 @@ function handleOpen(cite: ChatCitation | null) {
   border-radius: 6px;
 }
 
-.cite-chip {
-  all: unset;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 6px;
-  margin: 0 2px;
-  color: #0f766e;
-  font-size: 11.5px;
-  font-weight: 600;
-  line-height: 18px;
-  cursor: pointer;
-  border: 1px solid rgb(15 118 110 / 30%);
-  border-radius: 999px;
-  background: rgb(15 118 110 / 6%);
-  transition:
-    background 0.12s ease,
-    border-color 0.12s ease;
-  vertical-align: baseline;
-  font-variant-numeric: tabular-nums;
+.answer-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #f0f0ef;
 }
 
-.cite-chip:hover {
-  background: rgb(15 118 110 / 12%);
-  border-color: #0f766e;
-}
-
-.cite-chip:focus-visible {
-  outline: 2px solid rgb(15 118 110 / 35%);
-  outline-offset: 2px;
-}
-
-.cite-missing {
-  margin: 0;
+.answer-sources__head {
   color: #6b7280;
   font-size: 12px;
+  font-weight: 600;
+}
+
+.answer-source {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #f8faf9;
+}
+
+.answer-source__mark {
+  width: 7px;
+  height: 7px;
+  background: #0f766e;
+  border-radius: 50%;
+}
+
+.answer-source__title {
+  color: #111827;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.7;
 }
 
 .markdown-body :deep(p) {

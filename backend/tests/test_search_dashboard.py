@@ -289,7 +289,6 @@ def test_doc_types() -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert "doc_kinds" in data
-    assert "scheme_types" in data
     assert len(data["doc_kinds"]) >= 1
 
 

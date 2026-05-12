@@ -751,16 +751,16 @@ backend/
 
 ### Stage 4 · 知识库骨架（1 周）
 
-**整体目标**：知识库 CRUD + 权限矩阵（不含入库）。
+**整体目标**：知识库访问入口、管理员治理能力和权限矩阵（不含入库）。
 
 #### 4.1 模型与路由（2 天） - 最新要求：抛弃旧版本的数据库表设计和所有数据，全部按按照系统架构重新设计，并创建新的数据进行测试
 - 迁移：`knowledge_bases / knowledge_base_permissions`。
-- `/v2/knowledge-bases` CRUD；`/v2/knowledge-bases/{id}/permissions` 角色矩阵（owner/editor/viewer）。
+- `/v2/knowledge-bases` 提供可访问知识库列表、详情和基础信息更新；管理员通过 `/v2/admin/knowledge-bases` 进行创建、删除和权限设置。
 - **验收**：权限边界单元测试全过。
 
 #### 4.2 前端（3 天）
-- Knowledge 列表 / CreateKB / EditKB / 权限管理抽屉。
-- Admin KnowledgeManagement（平台管理员视角）。
+- Knowledge 列表 / 进入具体知识库 / EditKB。
+- Admin KnowledgeManagement（平台管理员视角）：CreateKB / DeleteKB / 权限设置 / 档案审计。
 - **验收**：权限变更即时生效。
 
 ---

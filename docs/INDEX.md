@@ -1,13 +1,18 @@
 # 文档索引
 
-| 文档 | 说明 |
-|------|------|
-| [ultimate-refactor.md](ultimate-refactor.md) | 总体重构方案（10 阶段路线图、架构设计、数据模型） |
-| [stage-1-infrastructure-progress.md](stage-1-infrastructure-progress.md) | Stage 1 · 基础设施骨架 进度报告 |
-| [stage-2-data-auth-progress.md](stage-2-data-auth-progress.md) | Stage 2 · 数据层与认证内核 进度报告 |
-| [stage-3-user-admin-progress.md](stage-3-user-admin-progress.md) | Stage 3 · 用户与后台管理 进度报告 |
-| [stage-4-knowledge-base-progress.md](stage-4-knowledge-base-progress.md) | Stage 4 · 知识库骨架 进度报告 |
-| [stage-5-ingest-progress.md](stage-5-ingest-progress.md) | Stage 5 · 入库链路核心 进度报告 |
-| [stage-6-document-preview-rag-progress.md](stage-6-document-preview-rag-progress.md) | Stage 6 · 文档预览与 RAG 元数据闭环 进度报告 |
-| [stage-7-rag-chat-progress.md](stage-7-rag-chat-progress.md) | Stage 7 · RAG 问答链路 进度报告 |
-| [stage-8-search-dashboard-progress.md](stage-8-search-dashboard-progress.md) | Stage 8 · 搜索与仪表板 进度报告 |
+| 文档                                                                                   | 说明                                              |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| [ultimate-refactor.md](ultimate-refactor.md)                                           | 总体重构方案（10 阶段路线图、架构设计、数据模型） |
+| [stage-1-infrastructure-progress.md](stage-1-infrastructure-progress.md)               | Stage 1 · 基础设施骨架 进度报告                   |
+| [stage-2-data-auth-progress.md](stage-2-data-auth-progress.md)                         | Stage 2 · 数据层与认证内核 进度报告               |
+| [stage-3-user-admin-progress.md](stage-3-user-admin-progress.md)                       | Stage 3 · 用户与后台管理 进度报告                 |
+| [stage-4-knowledge-base-progress.md](stage-4-knowledge-base-progress.md)               | Stage 4 · 知识库骨架 进度报告                     |
+| [stage-5-ingest-progress.md](stage-5-ingest-progress.md)                               | Stage 5 · 入库链路核心 进度报告                   |
+| [stage-6-document-preview-rag-progress.md](stage-6-document-preview-rag-progress.md)   | Stage 6 · 文档预览与 RAG 元数据闭环 进度报告      |
+| [stage-7-rag-chat-progress.md](stage-7-rag-chat-progress.md)                           | Stage 7 · RAG 问答链路 进度报告                   |
+| [stage-8-search-dashboard-progress.md](stage-8-search-dashboard-progress.md)           | Stage 8 · 搜索与仪表板 进度报告                   |
+| [ingest-runtime-fix-2026-05-11.md](ingest-runtime-fix-2026-05-11.md)                   | 2026-05-11 · 入库运行时修复记录                   |
+| [chat-streaming-ux-fix-2026-05-11.md](chat-streaming-ux-fix-2026-05-11.md)             | 2026-05-11 · 智能问答流式输出与引用展示优化记录   |
+| [kb-lifecycle-permission-fix-2026-05-12.md](kb-lifecycle-permission-fix-2026-05-12.md) | 2026-05-12 · 知识库生命周期与权限语义修正         |
+| [knowledge-list-toolbar-ux-2026-05-12.md](knowledge-list-toolbar-ux-2026-05-12.md)     | 2026-05-12 · /knowledge 工具栏视觉修正            |
+| [knowledge-document-pdf-preview-2026-05-12.md](knowledge-document-pdf-preview-2026-05-12.md) | 2026-05-12 · 知识库详情 PDF 预览跳转修正    |

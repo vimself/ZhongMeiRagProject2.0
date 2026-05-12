@@ -79,6 +79,9 @@ async def require_document_role(
     document = await db.get(Document, document_id)
     if document is None or document.status == "disabled":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文档不存在")
+    kb = await db.get(KnowledgeBase, document.knowledge_base_id)
+    if kb is None or not kb.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文档不存在")
     if user.role == "admin":
         return document, "admin"
     role = await _get_user_kb_role(db, user.id, document.knowledge_base_id)

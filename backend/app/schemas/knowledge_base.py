@@ -16,8 +16,14 @@ class KnowledgeBaseOut(BaseModel):
     name: str
     description: str
     creator_id: str | None = None
+    creator_username: str = ""
+    creator_name: str = ""
     is_active: bool
     my_role: str | None = None
+    document_count: int = 0
+    active_document_count: int = 0
+    permission_count: int = 0
+    deleted_at: str | None = None
     created_at: str
     updated_at: str
 

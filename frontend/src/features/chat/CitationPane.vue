@@ -3,6 +3,7 @@ import { computed } from 'vue'
 
 import type { ChatCitation } from '@/api/chat'
 import CitationCard from '@/features/chat/CitationCard.vue'
+import { orderedCitations } from '@/features/chat/citationDisplay'
 
 const props = defineProps<{
   references: ChatCitation[]
@@ -14,7 +15,7 @@ const emit = defineEmits<{
   (e: 'open', citation: ChatCitation): void
 }>()
 
-const items = computed(() => props.references ?? [])
+const items = computed(() => orderedCitations(props.references ?? []))
 </script>
 
 <template>
@@ -22,7 +23,7 @@ const items = computed(() => props.references ?? [])
     <header class="citation-pane__head">
       <div class="citation-pane__title">
         <span class="dot" />
-        证据面板
+        参考文档详情
       </div>
       <span class="count">{{ items.length }} 条引用</span>
     </header>
