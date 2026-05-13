@@ -353,6 +353,28 @@ class TestAdminUsers:
         )
         assert resp.status_code == 409
 
+    def test_create_user_allows_duplicate_display_name(self) -> None:
+        _seed_admin()
+        client = TestClient(create_app())
+        tokens = _login(client)
+
+        payloads = [
+            {"username": "same-name-1", "display_name": "同名用户", "password": "password123"},
+            {"username": "same-name-2", "display_name": "同名用户", "password": "password456"},
+        ]
+
+        responses = [
+            client.post(
+                "/api/v2/admin/users",
+                headers=_auth_header(tokens["access_token"]),
+                json=payload,
+            )
+            for payload in payloads
+        ]
+
+        assert [resp.status_code for resp in responses] == [201, 201]
+        assert [resp.json()["display_name"] for resp in responses] == ["同名用户", "同名用户"]
+
     def test_update_user(self) -> None:
         _seed_admin()
         user_id = _seed_user()

@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.timezone import beijing_now
 from app.db.base import Base
-
-
-def utcnow() -> datetime:
-    return datetime.now(UTC)
 
 
 def new_uuid() -> str:
@@ -27,9 +24,9 @@ class KnowledgeBase(Base):
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=beijing_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=beijing_now, onupdate=beijing_now
     )
 
     permissions: Mapped[list[KnowledgeBasePermission]] = relationship(
@@ -53,9 +50,9 @@ class KnowledgeBasePermission(Base):
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     role: Mapped[str] = mapped_column(String(32), nullable=False, default="viewer")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=beijing_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=beijing_now, onupdate=beijing_now
     )
 
     knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="permissions")

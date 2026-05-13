@@ -11,6 +11,7 @@ from app.api.deps import DbSession, current_user
 from app.models.auth import User
 from app.models.document import Document
 from app.models.knowledge_base import KnowledgeBase, KnowledgeBasePermission
+from app.services.deletion import DOCUMENT_DELETING_STATUS
 
 VALID_ROLES = {"owner", "editor", "viewer"}
 
@@ -77,7 +78,7 @@ async def require_document_role(
     allowed: set[str],
 ) -> tuple[Document, str]:
     document = await db.get(Document, document_id)
-    if document is None or document.status == "disabled":
+    if document is None or document.status in {"disabled", DOCUMENT_DELETING_STATUS}:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文档不存在")
     kb = await db.get(KnowledgeBase, document.knowledge_base_id)
     if kb is None or not kb.is_active:

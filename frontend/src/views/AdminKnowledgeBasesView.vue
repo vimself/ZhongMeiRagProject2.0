@@ -51,6 +51,7 @@ import type {
   PermissionUpdateItem,
   PermissionUserOut,
 } from '@/api/types'
+import { formatBeijingDateTime } from '@/utils/time'
 
 const router = useRouter()
 
@@ -61,7 +62,6 @@ const page = ref(1)
 const pageSize = ref(20)
 const loading = ref(false)
 const search = ref('')
-const filterActive = ref<boolean | undefined>(undefined)
 
 // ── Create dialog ───────────────────────────────────────────────────
 const dialogVisible = ref(false)
@@ -88,15 +88,7 @@ const allUsers = ref<PermissionUserOut[]>([])
 const permForm = ref<PermissionUpdateItem[]>([])
 
 // ── Helpers ─────────────────────────────────────────────────────────
-function formatDateTime(iso: string | null): string {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
+const formatDateTime = formatBeijingDateTime
 
 function roleLabel(role: string): string {
   const map: Record<string, string> = {
@@ -139,14 +131,11 @@ function permissionUserLabel(permission: PermissionOut): string {
     : compactUserId(permission.user_id)
 }
 
-function deletedAtLabel(row: KnowledgeBaseOut): string {
-  return row.deleted_at ? formatDateTime(row.deleted_at) : '—'
-}
-
 function lifecycleActionLabel(action: string): string {
   const map: Record<string, string> = {
     'knowledge_base.create': '创建知识库',
     'knowledge_base.update': '更新信息',
+    'knowledge_base.delete': '删除知识库',
     'knowledge_base.disable': '删除知识库',
     'knowledge_base.permissions.update': '更新权限',
   }
@@ -166,7 +155,6 @@ async function loadKBs() {
       page: page.value,
       page_size: pageSize.value,
       search: search.value,
-      is_active: filterActive.value,
     })
     kbs.value = resp.data.items
     total.value = resp.data.total
@@ -221,7 +209,7 @@ async function submitCreate() {
 async function handleDelete(kb: KnowledgeBaseOut) {
   try {
     await ElMessageBox.confirm(
-      `确定要删除知识库 "${kb.name}" 吗？删除后该知识库、文档、搜索和问答入口将不可访问。后台会保留删除档案，当前不提供恢复入口。`,
+      `确定要删除知识库 "${kb.name}" 吗？删除后无法找回，后端会物理删除该知识库、文档、OCR 结果和向量数据，并解除历史会话绑定。`,
       '删除知识库',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
     )
@@ -359,8 +347,8 @@ onMounted(loadKBs)
     <header class="page-header">
       <ElButton :icon="Back" text @click="router.push('/')">返回首页</ElButton>
       <div>
-        <h1>知识库档案</h1>
-        <p>全局生命周期、规模与审计记录</p>
+        <h1>知识库管理</h1>
+        <p>知识库全局生命周期、规模与审计记录</p>
       </div>
     </header>
 
@@ -377,16 +365,6 @@ onMounted(loadKBs)
             @keyup.enter="handleSearch"
             @clear="handleSearch"
           />
-          <ElSelect
-            v-model="filterActive"
-            placeholder="状态筛选"
-            clearable
-            style="width: 140px"
-            @change="handleSearch"
-          >
-            <ElOption label="可用" :value="true" />
-            <ElOption label="已删除" :value="false" />
-          </ElSelect>
         </div>
         <div class="toolbar-actions">
           <ElButton :icon="Refresh" @click="loadKBs">刷新</ElButton>
@@ -402,13 +380,6 @@ onMounted(loadKBs)
         <ElTableColumn prop="description" label="描述" min-width="180">
           <template #default="{ row }: { row: KnowledgeBaseOut }">
             <span class="desc-cell">{{ row.description || '—' }}</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="状态" width="80">
-          <template #default="{ row }: { row: KnowledgeBaseOut }">
-            <ElTag :type="row.is_active ? 'success' : 'info'" size="small">
-              {{ row.is_active ? '可用' : '已删除' }}
-            </ElTag>
           </template>
         </ElTableColumn>
         <ElTableColumn label="文档规模" width="100">
@@ -431,11 +402,6 @@ onMounted(loadKBs)
         <ElTableColumn label="创建时间" width="150">
           <template #default="{ row }: { row: KnowledgeBaseOut }">
             <span class="time-cell">{{ formatDateTime(row.created_at) }}</span>
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="删除时间" width="110">
-          <template #default="{ row }: { row: KnowledgeBaseOut }">
-            <span class="time-cell">{{ deletedAtLabel(row) }}</span>
           </template>
         </ElTableColumn>
         <ElTableColumn label="操作" width="210" align="right">
@@ -567,20 +533,12 @@ onMounted(loadKBs)
             <h2>生命周期</h2>
             <div class="archive-grid">
               <div>
-                <span>状态</span>
-                <strong>{{ selectedKb.is_active ? '可用' : '已删除' }}</strong>
-              </div>
-              <div>
                 <span>创建者</span>
                 <strong>{{ creatorLabel(selectedKb) }}</strong>
               </div>
               <div>
                 <span>创建时间</span>
                 <strong>{{ formatDateTime(selectedKb.created_at) }}</strong>
-              </div>
-              <div>
-                <span>删除时间</span>
-                <strong>{{ deletedAtLabel(selectedKb) }}</strong>
               </div>
             </div>
           </section>
@@ -589,11 +547,11 @@ onMounted(loadKBs)
             <h2>规模快照</h2>
             <div class="archive-grid">
               <div>
-                <span>可用文档</span>
+                <span>文档总数</span>
                 <strong>{{ selectedKb.active_document_count }}</strong>
               </div>
               <div>
-                <span>历史文档</span>
+                <span>数据库记录</span>
                 <strong>{{ selectedKb.document_count }}</strong>
               </div>
               <div>

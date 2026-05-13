@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.timezone import beijing_now
 from app.db.base import Base
-
-
-def utcnow() -> datetime:
-    return datetime.now(UTC)
 
 
 def new_uuid() -> str:
@@ -39,9 +36,9 @@ class Document(Base):
     is_standard_clause: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     page_count: Mapped[int | None] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=beijing_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=beijing_now, onupdate=beijing_now
     )
 
     ingest_jobs: Mapped[list[DocumentIngestJob]] = relationship(
@@ -80,7 +77,7 @@ class DocumentParseResult(Base):
     markdown_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     outline_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     stats_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=beijing_now)
 
     document: Mapped[Document] = relationship(back_populates="parse_result")
 
@@ -97,7 +94,7 @@ class DocumentAsset(Base):
     bbox_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     storage_path: Mapped[str] = mapped_column(String(1024), nullable=False)
     caption: Mapped[str | None] = mapped_column(String(1024))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=beijing_now)
 
     document: Mapped[Document] = relationship(back_populates="assets")
 
@@ -113,12 +110,12 @@ class DocumentIngestJob(Base):
     )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=beijing_now)
     last_error: Mapped[str | None] = mapped_column(Text)
     trace_id: Mapped[str] = mapped_column(String(64), nullable=False, default=new_uuid)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=beijing_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=beijing_now, onupdate=beijing_now
     )
 
     document: Mapped[Document] = relationship(back_populates="ingest_jobs")
@@ -145,7 +142,7 @@ class IngestStepReceipt(Base):
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=beijing_now)
 
     job: Mapped[DocumentIngestJob] = relationship(back_populates="receipts")
 
@@ -160,7 +157,7 @@ class IngestCallbackReceipt(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=beijing_now)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
@@ -190,7 +187,7 @@ class KnowledgeChunkV2(Base):
     sparse: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     vector_native: Mapped[str | None] = mapped_column(Text)
     sparse_native: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=beijing_now)
 
     __table_args__ = (
         Index(
@@ -215,7 +212,7 @@ class KnowledgePageIndexV2(Base):
     section_map_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     block_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     text: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=beijing_now)
 
     __table_args__ = (
         Index("ix_kpage_index_v2_doc_page", "document_id", "page_no"),

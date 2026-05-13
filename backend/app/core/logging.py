@@ -6,6 +6,7 @@ from typing import Any
 from loguru import logger
 
 from app.core.config import Settings
+from app.core.timezone import isoformat_beijing
 
 
 class InterceptHandler(logging.Handler):
@@ -21,7 +22,7 @@ class InterceptHandler(logging.Handler):
 def json_sink(message: Any) -> None:
     record = message.record
     payload = {
-        "time": record["time"].isoformat(),
+        "time": isoformat_beijing(record["time"]),
         "level": record["level"].name,
         "message": record["message"],
         "module": record["module"],

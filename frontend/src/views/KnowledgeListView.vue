@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Back, Edit, Refresh, Search, View } from '@element-plus/icons-vue'
+import { Back, Edit, Refresh, Search } from '@element-plus/icons-vue'
 import ElButton from 'element-plus/es/components/button/index.mjs'
 import ElCard from 'element-plus/es/components/card/index.mjs'
 import ElDialog from 'element-plus/es/components/dialog/index.mjs'
@@ -31,6 +31,7 @@ import { useRouter } from 'vue-router'
 
 import { listKnowledgeBases, updateKnowledgeBase } from '@/api/knowledge'
 import type { KnowledgeBaseOut } from '@/api/types'
+import { formatBeijingDateTime } from '@/utils/time'
 
 const router = useRouter()
 
@@ -52,15 +53,7 @@ const dialogForm = reactive({
 })
 
 // ── Helpers ─────────────────────────────────────────────────────────
-function formatDateTime(iso: string | null): string {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
+const formatDateTime = formatBeijingDateTime
 
 function roleLabel(role: string | null): string {
   const map: Record<string, string> = {
@@ -203,18 +196,9 @@ onMounted(loadKBs)
             <span class="time-cell">{{ formatDateTime(row.created_at) }}</span>
           </template>
         </ElTableColumn>
-        <ElTableColumn label="操作" width="190" fixed="right">
+        <ElTableColumn label="操作" width="100" fixed="right">
           <template #default="{ row }: { row: KnowledgeBaseOut }">
             <div class="action-btns">
-              <ElButton
-                :icon="View"
-                text
-                size="small"
-                type="primary"
-                @click.stop="openDocuments(row)"
-              >
-                文档
-              </ElButton>
               <ElButton
                 v-if="
                   row.my_role === 'owner' || row.my_role === 'editor' || row.my_role === 'admin'

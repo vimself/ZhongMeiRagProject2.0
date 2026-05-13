@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     File,
     Form,
@@ -31,6 +31,7 @@ from app.api.knowledge_base_deps import (
 )
 from app.celery_app import celery_app
 from app.core.config import get_settings
+from app.core.timezone import beijing_now, isoformat_beijing
 from app.models.auth import User
 from app.models.document import (
     Document,
@@ -42,9 +43,14 @@ from app.models.document import (
 )
 from app.schemas.document import (
     AssetOut,
+    DocumentBatchDeleteRequest,
+    DocumentBatchDeleteResponse,
+    DocumentDeleteResponse,
     DocumentDetailResponse,
     DocumentListResponse,
     DocumentOut,
+    DocumentUploadItem,
+    DocumentUploadRejectedItem,
     DocumentUploadResponse,
     RetryDocumentResponse,
 )
@@ -56,12 +62,19 @@ from app.schemas.ingest import (
     RetrievalDebugResponse,
 )
 from app.security.jwt import issue_asset_token, issue_pdf_token
+from app.services.deletion import (
+    DOCUMENT_DELETING_STATUS,
+    collect_document_artifact_paths,
+    delete_artifact_files,
+    hard_delete_documents,
+)
 from app.services.llm.client import DashScopeClient
 from app.services.rag.retriever import Retriever
 
 router = APIRouter(tags=["documents"])
 CurrentUser = Annotated[User, Depends(current_user)]
-UploadedPdf = Annotated[UploadFile, File()]
+OptionalUploadedPdf = Annotated[UploadFile | None, File()]
+OptionalUploadedPdfs = Annotated[list[UploadFile] | None, File()]
 OptionalTitle = Annotated[str | None, Form()]
 DocKindForm = Annotated[str, Form()]
 OptionalSchemeType = Annotated[str | None, Form()]
@@ -79,6 +92,43 @@ INGEST_STEPS = [
     "finalize",
 ]
 
+INGEST_STEP_PROGRESS = {
+    "upload_to_ocr": 15,
+    "poll_and_fetch_ocr": 35,
+    "parse_outline": 45,
+    "section_aware_chunk": 55,
+    "embed_batch": 70,
+    "track_a_write": 82,
+    "track_b_write": 90,
+    "asset_register": 96,
+    "finalize": 100,
+}
+
+INGEST_STEP_PHASES = {
+    "upload_to_ocr": "ocr",
+    "poll_and_fetch_ocr": "ocr",
+    "parse_outline": "embedding",
+    "section_aware_chunk": "embedding",
+    "embed_batch": "embedding",
+    "track_a_write": "vector_indexing",
+    "track_b_write": "vector_indexing",
+    "asset_register": "vector_indexing",
+    "finalize": "ready",
+}
+
+DOCUMENT_STATUS_COMPAT = {
+    "parsing": "embedding",
+    "indexing": "vector_indexing",
+}
+
+INGEST_PHASE_RANK = {
+    "pending": 0,
+    "ocr": 1,
+    "embedding": 2,
+    "vector_indexing": 3,
+    "ready": 4,
+}
+
 
 @router.post(
     "/api/v2/knowledge-bases/{kb_id}/documents",
@@ -91,59 +141,85 @@ async def upload_document(
     result: RequireEditor,
     user: CurrentUser,
     db: DbSession,
-    file: UploadedPdf,
+    file: OptionalUploadedPdf = None,
+    files: OptionalUploadedPdfs = None,
     title: OptionalTitle = None,
     doc_kind: DocKindForm = "other",
     scheme_type: OptionalSchemeType = None,
     is_standard_clause: StandardClauseForm = False,
 ) -> DocumentUploadResponse:
     kb, _role = result
-    content = await file.read()
-    _validate_upload(file, content)
     settings = get_settings()
-    now = datetime.now(UTC)
-    suffix = Path(file.filename or "document.pdf").suffix.lower() or ".pdf"
-    document_id = str(uuid.uuid4())
-    storage_path = (
-        Path(settings.upload_dir)
-        / f"{now:%Y}"
-        / f"{now:%m}"
-        / f"{now:%d}"
-        / f"{document_id}{suffix}"
+    upload_files = _collect_upload_files(
+        file=file,
+        files=files,
+        max_count=settings.upload_max_files,
     )
-    storage_path.parent.mkdir(parents=True, exist_ok=True)
-    storage_path.write_bytes(content)
-    document = Document(
-        id=document_id,
-        knowledge_base_id=kb.id,
-        uploader_id=user.id,
-        title=(title or Path(file.filename or "document.pdf").stem).strip(),
-        filename=file.filename or f"{document_id}.pdf",
-        mime=file.content_type or "application/pdf",
-        size_bytes=len(content),
-        sha256=hashlib.sha256(content).hexdigest(),
-        storage_path=str(storage_path),
-        doc_kind=_normalize_doc_kind(doc_kind),
-        scheme_type=scheme_type.strip() if scheme_type else None,
-        is_standard_clause=is_standard_clause,
-        status="pending",
+    single_upload = len(upload_files) == 1
+    accepted: list[DocumentUploadItem] = []
+    rejected: list[DocumentUploadRejectedItem] = []
+    tasks_to_send: list[tuple[str, str]] = []
+    upload_files = await _filter_duplicate_upload_files(
+        db=db,
+        kb_id=kb.id,
+        upload_files=upload_files,
+        rejected=rejected,
     )
-    job = DocumentIngestJob(document_id=document.id, status="queued", trace_id=str(uuid.uuid4()))
-    db.add(document)
-    db.add(job)
-    await _record_audit(
-        db,
-        actor_user_id=user.id,
-        action="document.upload",
-        target_type="document",
-        target_id=document.id,
-        request=request,
-        details={"knowledge_base_id": kb_id, "filename": document.filename},
-    )
+
+    for upload_file in upload_files:
+        try:
+            item, document_id, job_id = await _stage_document_upload(
+                kb_id=kb.id,
+                user_id=user.id,
+                request=request,
+                db=db,
+                file=upload_file,
+                title=title if single_upload else None,
+                doc_kind=doc_kind,
+                scheme_type=scheme_type,
+                is_standard_clause=is_standard_clause,
+            )
+        except HTTPException as exc:
+            if single_upload:
+                raise
+            rejected.append(
+                DocumentUploadRejectedItem(
+                    filename=upload_file.filename or "未命名文件",
+                    reason=str(exc.detail),
+                )
+            )
+            continue
+        accepted.append(item)
+        tasks_to_send.append((job_id, document_id))
+
+    if not accepted:
+        if rejected and all(item.reason == "文件名已存在" for item in rejected):
+            return DocumentUploadResponse(
+                documents=[],
+                rejected=rejected,
+                accepted_count=0,
+                rejected_count=len(rejected),
+                max_count=settings.upload_max_files,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="没有可上传的有效 PDF 文件",
+        )
+
     await db.commit()
-    await db.refresh(job)
-    _send_ingest_task(job_id=job.id, document_id=document.id, actor_user_id=user.id)
-    return DocumentUploadResponse(document_id=document.id, job_id=job.id, trace_id=job.trace_id)
+    for job_id, document_id in tasks_to_send:
+        _send_ingest_task(job_id=job_id, document_id=document_id, actor_user_id=user.id)
+    first = accepted[0]
+    return DocumentUploadResponse(
+        document_id=first.document_id,
+        job_id=first.job_id,
+        trace_id=first.trace_id,
+        documents=accepted,
+        rejected=rejected,
+        accepted_count=len(accepted),
+        rejected_count=len(rejected),
+        max_count=settings.upload_max_files,
+    )
 
 
 @router.get("/api/v2/knowledge-bases/{kb_id}/documents", response_model=DocumentListResponse)
@@ -157,12 +233,16 @@ async def list_documents(
 ) -> DocumentListResponse:
     kb, _role = result
     query = select(Document).where(
-        Document.knowledge_base_id == kb.id, Document.status != "disabled"
+        Document.knowledge_base_id == kb.id,
+        Document.status.notin_(("disabled", DOCUMENT_DELETING_STATUS)),
     )
     count_query = (
         select(func.count())
         .select_from(Document)
-        .where(Document.knowledge_base_id == kb.id, Document.status != "disabled")
+        .where(
+            Document.knowledge_base_id == kb.id,
+            Document.status.notin_(("disabled", DOCUMENT_DELETING_STATUS)),
+        )
     )
     if search:
         pattern = f"%{search}%"
@@ -191,6 +271,53 @@ async def list_documents(
         page=page,
         page_size=page_size,
     )
+
+
+@router.delete(
+    "/api/v2/knowledge-bases/{kb_id}/documents",
+    response_model=DocumentBatchDeleteResponse,
+)
+async def delete_documents_batch(
+    kb_id: str,
+    request: Request,
+    body: Annotated[DocumentBatchDeleteRequest, Body()],
+    result: RequireEditor,
+    user: CurrentUser,
+    db: DbSession,
+) -> DocumentBatchDeleteResponse:
+    kb, role = result
+    if role not in {"admin", "owner"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="没有删除文档的权限")
+    document_ids = list(dict.fromkeys(body.document_ids))
+    rows = list(
+        (
+            await db.execute(
+                select(Document).where(
+                    Document.id.in_(document_ids),
+                    Document.knowledge_base_id == kb.id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(rows) != len(document_ids):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文档不存在")
+
+    artifact_paths = await collect_document_artifact_paths(db, document_ids)
+    await _record_audit(
+        db,
+        actor_user_id=user.id,
+        action="document.delete.batch",
+        target_type="knowledge_base",
+        target_id=kb.id,
+        request=request,
+        details={"knowledge_base_id": kb_id, "document_ids": document_ids, "count": len(rows)},
+    )
+    await hard_delete_documents(db, document_ids)
+    await db.commit()
+    delete_artifact_files(artifact_paths)
+    return DocumentBatchDeleteResponse(deleted_ids=document_ids, deleted_count=len(document_ids))
 
 
 @router.get("/api/v2/documents/{document_id}", response_model=DocumentDetailResponse)
@@ -237,7 +364,7 @@ async def get_ingest_progress(
     if job is None:
         return IngestJobProgress(
             document_id=document.id,
-            document_status=document.status,
+            document_status=_normalize_document_status(document.status),
             progress=0,
             steps=[],
         )
@@ -250,17 +377,18 @@ async def get_ingest_progress(
         IngestStepProgress(
             step=receipt.step,
             status=receipt.status,
-            created_at=receipt.created_at.isoformat(),
+            created_at=isoformat_beijing(receipt.created_at),
         )
         for receipt in receipts
     ]
     done = {receipt.step for receipt in receipts if receipt.status == "succeeded"}
-    progress = 100 if job.status == "succeeded" else int(len(done) / len(INGEST_STEPS) * 100)
+    document_status = _progress_status(document.status, job.status, done)
+    progress = _progress_percent(document_status, job.status, done)
     return IngestJobProgress(
         document_id=document.id,
         job_id=job.id,
         job_status=job.status,
-        document_status=document.status,
+        document_status=document_status,
         progress=progress,
         steps=steps,
         last_error=job.last_error,
@@ -298,28 +426,28 @@ async def retry_document(
     )
 
 
-@router.delete("/api/v2/documents/{document_id}", response_model=DocumentOut)
-async def disable_document(
+@router.delete("/api/v2/documents/{document_id}", response_model=DocumentDeleteResponse)
+async def delete_document(
     document_id: str,
     request: Request,
     user: CurrentUser,
     db: DbSession,
-) -> DocumentOut:
+) -> DocumentDeleteResponse:
     document, _role = await require_document_role(db, user, document_id, {"owner"})
-    document.status = "disabled"
+    artifact_paths = await collect_document_artifact_paths(db, [document.id])
     await _record_audit(
         db,
         actor_user_id=user.id,
-        action="document.disable",
+        action="document.delete",
         target_type="document",
         target_id=document.id,
         request=request,
         details={"knowledge_base_id": document.knowledge_base_id},
     )
+    await hard_delete_documents(db, [document.id])
     await db.commit()
-    await db.refresh(document)
-    users_map = await _users_map(db, [document.uploader_id])
-    return _document_out(document, users_map.get(document.uploader_id, ""))
+    delete_artifact_files(artifact_paths)
+    return DocumentDeleteResponse(document_id=document_id)
 
 
 @router.post("/api/v2/retrieval/debug", response_model=RetrievalDebugResponse)
@@ -408,6 +536,146 @@ async def receive_ocr_callback(
     return {"status": "ok"}
 
 
+def _collect_upload_files(
+    *,
+    file: UploadFile | None,
+    files: list[UploadFile] | None,
+    max_count: int,
+) -> list[UploadFile]:
+    upload_files: list[UploadFile] = []
+    if file is not None:
+        upload_files.append(file)
+    if files:
+        upload_files.extend(files)
+    if not upload_files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请选择要上传的 PDF 文件",
+        )
+    if len(upload_files) > max_count:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"一次最多上传 {max_count} 份文档",
+        )
+    return upload_files
+
+
+async def _filter_duplicate_upload_files(
+    *,
+    db: AsyncSession,
+    kb_id: str,
+    upload_files: list[UploadFile],
+    rejected: list[DocumentUploadRejectedItem],
+) -> list[UploadFile]:
+    candidate_names = [_upload_basename(upload_file) for upload_file in upload_files]
+    candidate_name_keys = [_filename_key(filename) for filename in candidate_names]
+    existing_names = await db.scalars(
+        select(Document.filename).where(
+            Document.knowledge_base_id == kb_id,
+            Document.status.notin_(("disabled", DOCUMENT_DELETING_STATUS)),
+            func.lower(Document.filename).in_(candidate_name_keys),
+        )
+    )
+    existing_name_keys = {_filename_key(filename) for filename in existing_names}
+    seen_name_keys: set[str] = set()
+    unique_files: list[UploadFile] = []
+
+    for upload_file, filename in zip(upload_files, candidate_names, strict=True):
+        filename_key = _filename_key(filename)
+        if filename_key in existing_name_keys or filename_key in seen_name_keys:
+            rejected.append(DocumentUploadRejectedItem(filename=filename, reason="文件名已存在"))
+            continue
+        seen_name_keys.add(filename_key)
+        unique_files.append(upload_file)
+
+    return unique_files
+
+
+async def _stage_document_upload(
+    *,
+    kb_id: str,
+    user_id: str,
+    request: Request,
+    db: AsyncSession,
+    file: UploadFile,
+    title: str | None,
+    doc_kind: str,
+    scheme_type: str | None,
+    is_standard_clause: bool,
+) -> tuple[DocumentUploadItem, str, str]:
+    content = await file.read()
+    _validate_upload(file, content)
+    settings = get_settings()
+    now = beijing_now()
+    original_filename = Path(file.filename or "document.pdf").name
+    suffix = Path(original_filename).suffix.lower() or ".pdf"
+    document_id = str(uuid.uuid4())
+    job_id = str(uuid.uuid4())
+    trace_id = str(uuid.uuid4())
+    storage_path = (
+        Path(settings.upload_dir)
+        / f"{now:%Y}"
+        / f"{now:%m}"
+        / f"{now:%d}"
+        / f"{document_id}{suffix}"
+    )
+    storage_path.parent.mkdir(parents=True, exist_ok=True)
+    storage_path.write_bytes(content)
+    filename_stem = Path(original_filename).stem or "未命名文档"
+    document_title = (title or filename_stem).strip() or filename_stem
+    document = Document(
+        id=document_id,
+        knowledge_base_id=kb_id,
+        uploader_id=user_id,
+        title=document_title,
+        filename=original_filename or f"{document_id}.pdf",
+        mime=file.content_type or "application/pdf",
+        size_bytes=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
+        storage_path=str(storage_path),
+        doc_kind=_normalize_doc_kind(doc_kind),
+        scheme_type=scheme_type.strip() if scheme_type else None,
+        is_standard_clause=is_standard_clause,
+        status="pending",
+    )
+    job = DocumentIngestJob(
+        id=job_id,
+        document_id=document.id,
+        status="queued",
+        trace_id=trace_id,
+    )
+    db.add(document)
+    db.add(job)
+    await _record_audit(
+        db,
+        actor_user_id=user_id,
+        action="document.upload",
+        target_type="document",
+        target_id=document.id,
+        request=request,
+        details={"knowledge_base_id": kb_id, "filename": document.filename},
+    )
+    return (
+        DocumentUploadItem(
+            document_id=document.id,
+            job_id=job.id,
+            trace_id=job.trace_id,
+            title=document.title,
+            filename=document.filename,
+        ),
+        document.id,
+        job.id,
+    )
+
+
+def _upload_basename(file: UploadFile) -> str:
+    return Path(file.filename or "未命名文件").name or "未命名文件"
+
+
+def _filename_key(filename: str) -> str:
+    return filename.casefold()
+
+
 def _validate_upload(file: UploadFile, content: bytes) -> None:
     settings = get_settings()
     filename = file.filename or ""
@@ -435,7 +703,7 @@ async def _users_map(db: AsyncSession, user_ids: list[str]) -> dict[str, str]:
     if not user_ids:
         return {}
     users = (await db.execute(select(User).where(User.id.in_(set(user_ids))))).scalars().all()
-    return {user.id: user.display_name for user in users}
+    return {user.id: user.username for user in users}
 
 
 async def _latest_job(db: AsyncSession, document_id: str) -> DocumentIngestJob | None:
@@ -446,6 +714,45 @@ async def _latest_job(db: AsyncSession, document_id: str) -> DocumentIngestJob |
         .limit(1)
     )
     return job
+
+
+def _normalize_document_status(status_value: str) -> str:
+    return DOCUMENT_STATUS_COMPAT.get(status_value, status_value)
+
+
+def _progress_status(document_status: str, job_status: str | None, done: set[str]) -> str:
+    normalized = _normalize_document_status(document_status)
+    if normalized in {"ready", "failed", "disabled", DOCUMENT_DELETING_STATUS}:
+        return normalized
+    if job_status == "succeeded" or "finalize" in done:
+        return "ready"
+    if job_status in {"dead", "failed"}:
+        return "failed"
+    phase = normalized if normalized in INGEST_PHASE_RANK else "pending"
+    for step in reversed(INGEST_STEPS):
+        if step in done:
+            receipt_phase = INGEST_STEP_PHASES[step]
+            if INGEST_PHASE_RANK[receipt_phase] > INGEST_PHASE_RANK[phase]:
+                return receipt_phase
+            return phase
+    return phase
+
+
+def _progress_percent(document_status: str, job_status: str | None, done: set[str]) -> int:
+    if document_status == "ready" or job_status == "succeeded":
+        return 100
+    if document_status == "pending":
+        return 0
+    if not done:
+        return {"ocr": 8, "embedding": 40, "vector_indexing": 75}.get(document_status, 0)
+    progress = max(INGEST_STEP_PROGRESS.get(step, 0) for step in done)
+    floor = {"ocr": 8, "embedding": 40, "vector_indexing": 75, "failed": 0}.get(
+        document_status,
+        0,
+    )
+    if document_status == "failed":
+        return min(max(progress, floor), 99)
+    return min(max(progress, floor), 99)
 
 
 def _document_out(document: Document, uploader_name: str = "") -> DocumentOut:
@@ -462,10 +769,10 @@ def _document_out(document: Document, uploader_name: str = "") -> DocumentOut:
         doc_kind=document.doc_kind,
         scheme_type=document.scheme_type,
         is_standard_clause=document.is_standard_clause,
-        status=document.status,
+        status=_normalize_document_status(document.status),
         page_count=document.page_count,
-        created_at=document.created_at.isoformat(),
-        updated_at=document.updated_at.isoformat(),
+        created_at=isoformat_beijing(document.created_at),
+        updated_at=isoformat_beijing(document.updated_at),
     )
 
 
@@ -476,11 +783,11 @@ def _job_payload(job: DocumentIngestJob | None) -> dict[str, Any] | None:
         "id": job.id,
         "status": job.status,
         "attempt": job.attempt,
-        "available_at": job.available_at.isoformat(),
+        "available_at": isoformat_beijing(job.available_at),
         "last_error": job.last_error,
         "trace_id": job.trace_id,
-        "created_at": job.created_at.isoformat(),
-        "updated_at": job.updated_at.isoformat(),
+        "created_at": isoformat_beijing(job.created_at),
+        "updated_at": isoformat_beijing(job.updated_at),
     }
 
 
@@ -492,7 +799,7 @@ def _parse_payload(result: DocumentParseResult) -> dict[str, Any]:
         "markdown_sha256": result.markdown_sha256,
         "outline": result.outline_json,
         "stats": result.stats_json,
-        "created_at": result.created_at.isoformat(),
+        "created_at": isoformat_beijing(result.created_at),
     }
 
 
@@ -512,7 +819,7 @@ def _asset_payload(asset: DocumentAsset, *, user_id: str, kb_id: str) -> AssetOu
         storage_path=asset.storage_path,
         url=url,
         caption=asset.caption,
-        created_at=asset.created_at.isoformat(),
+        created_at=isoformat_beijing(asset.created_at),
     )
 
 

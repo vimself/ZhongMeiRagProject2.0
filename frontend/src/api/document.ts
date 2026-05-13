@@ -1,8 +1,9 @@
 import { apiClient } from '@/api/client'
 import type {
+  DocumentBatchDeleteResponse,
+  DocumentDeleteResponse,
   DocumentDetailResponse,
   DocumentListResponse,
-  DocumentOut,
   DocumentUploadResponse,
   IngestJobProgress,
 } from '@/api/types'
@@ -28,7 +29,34 @@ export function uploadDocument(
   }
   return apiClient.post<DocumentUploadResponse>(`/knowledge-bases/${kbId}/documents`, form, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 120_000,
+    timeout: 300_000,
+    onUploadProgress(event) {
+      if (!onUploadProgress || !event.total) return
+      onUploadProgress(Math.round((event.loaded / event.total) * 100))
+    },
+  })
+}
+
+export function uploadDocuments(
+  kbId: string,
+  payload: {
+    files: File[]
+    doc_kind?: string
+    scheme_type?: string
+    is_standard_clause?: boolean
+  },
+  onUploadProgress?: (percent: number) => void,
+) {
+  const form = new FormData()
+  payload.files.forEach((file) => form.append('files', file))
+  if (payload.doc_kind) form.append('doc_kind', payload.doc_kind)
+  if (payload.scheme_type) form.append('scheme_type', payload.scheme_type)
+  if (payload.is_standard_clause !== undefined) {
+    form.append('is_standard_clause', String(payload.is_standard_clause))
+  }
+  return apiClient.post<DocumentUploadResponse>(`/knowledge-bases/${kbId}/documents`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300_000,
     onUploadProgress(event) {
       if (!onUploadProgress || !event.total) return
       onUploadProgress(Math.round((event.loaded / event.total) * 100))
@@ -57,8 +85,14 @@ export function retryDocument(documentId: string) {
   )
 }
 
-export function disableDocument(documentId: string) {
-  return apiClient.delete<DocumentOut>(`/documents/${documentId}`)
+export function deleteDocument(documentId: string) {
+  return apiClient.delete<DocumentDeleteResponse>(`/documents/${documentId}`)
 }
 
-export const deleteDocument = disableDocument
+export const disableDocument = deleteDocument
+
+export function deleteDocuments(kbId: string, documentIds: string[]) {
+  return apiClient.delete<DocumentBatchDeleteResponse>(`/knowledge-bases/${kbId}/documents`, {
+    data: { document_ids: documentIds },
+  })
+}

@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from app.api.auth import _record_audit
 from app.api.deps import BearerCredentials, DbSession, current_user
 from app.celery_app import celery_app
+from app.core.timezone import isoformat_beijing
 from app.models.auth import User
 from app.models.search_export import SearchExportJob
 from app.schemas.search import (
@@ -151,7 +152,7 @@ async def create_export(
     return ExportJobOut(
         job_id=job.id,
         status=job.status,
-        created_at=job.created_at.isoformat(),
+        created_at=isoformat_beijing(job.created_at),
     )
 
 
@@ -175,7 +176,7 @@ async def get_export_status(
         file_size=job.file_size,
         download_url=download_url,
         error=job.error,
-        created_at=job.created_at.isoformat(),
+        created_at=isoformat_beijing(job.created_at),
     )
 
 

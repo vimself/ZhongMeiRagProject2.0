@@ -21,6 +21,7 @@ from app.api.deps import (
     pdf_token_user,
 )
 from app.api.knowledge_base_deps import require_document_role
+from app.core.timezone import isoformat_beijing
 from app.models.auth import User
 from app.models.document import DocumentAsset
 from app.schemas.pdf_preview import (
@@ -63,7 +64,7 @@ async def sign_pdf(
     await db.commit()
     return PdfSignResponse(
         token=issued.token,
-        expires_at=issued.expires_at.isoformat(),
+        expires_at=isoformat_beijing(issued.expires_at),
         document_id=document.id,
     )
 
@@ -98,7 +99,7 @@ async def sign_asset(
     await db.commit()
     return AssetSignResponse(
         token=issued.token,
-        expires_at=issued.expires_at.isoformat(),
+        expires_at=isoformat_beijing(issued.expires_at),
         asset_id=asset.id,
         document_id=document.id,
         url=url,

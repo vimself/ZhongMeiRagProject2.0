@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from app.db.base import Base
 from app.db.session import AsyncSessionLocal, engine
 from app.main import create_app
-from app.models.auth import User
+from app.models.auth import AuditLog, User
 from app.models.chat import ChatMessage, ChatSession
 from app.models.document import Document, KnowledgeChunkV2
 from app.models.knowledge_base import KnowledgeBase, KnowledgeBasePermission
@@ -158,6 +158,48 @@ def _login(client: TestClient, username: str = "admin") -> str:
     resp = client.post("/api/v2/auth/login", json={"username": username, "password": "pass"})
     assert resp.status_code == 200
     return str(resp.json()["access_token"])
+
+
+def _seed_dashboard_activities() -> None:
+    async def _inner() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add_all(
+                [
+                    AuditLog(
+                        actor_user_id="admin-id",
+                        action="knowledge_base.create",
+                        target_type="knowledge_base",
+                        target_id="kb-1",
+                        ip_address="127.0.0.1",
+                        details={"name": "KB1"},
+                    ),
+                    AuditLog(
+                        actor_user_id="admin-id",
+                        action="knowledge_base.permissions.update",
+                        target_type="knowledge_base",
+                        target_id="kb-1",
+                        ip_address="127.0.0.1",
+                    ),
+                    AuditLog(
+                        actor_user_id="admin-id",
+                        action="knowledge_base.delete",
+                        target_type="knowledge_base",
+                        target_id="deleted-kb",
+                        ip_address="127.0.0.1",
+                        details={"name": "Deleted KB"},
+                    ),
+                    AuditLog(
+                        actor_user_id="admin-id",
+                        action="document.upload",
+                        target_type="document",
+                        target_id="doc-1",
+                        ip_address="127.0.0.1",
+                    ),
+                ]
+            )
+            await session.commit()
+
+    asyncio.run(_inner())
 
 
 def test_search_single_kb() -> None:
@@ -415,6 +457,7 @@ def test_export_generation_respects_kb_filter(tmp_path: Path) -> None:
 
 def test_dashboard_stats_admin() -> None:
     _seed_multi_kb()
+    _seed_dashboard_activities()
     client = TestClient(create_app())
     token = _login(client, "admin")
     resp = client.get(
@@ -434,6 +477,20 @@ def test_dashboard_stats_admin() -> None:
     assert "document_by_kind" in data
     assert "ingest_by_status" in data
     assert "recent_activities" in data
+    assert {item["action"] for item in data["recent_activities"]} == {
+        "knowledge_base.create",
+        "knowledge_base.delete",
+        "knowledge_base.permissions.update",
+    }
+    assert all("ip_address" not in item for item in data["recent_activities"])
+    assert all(item["actor_username"] == "admin" for item in data["recent_activities"])
+    names_by_action = {
+        item["action"]: item["knowledge_base_name"] for item in data["recent_activities"]
+    }
+    assert names_by_action["knowledge_base.create"] == "KB1"
+    assert names_by_action["knowledge_base.permissions.update"] == "KB1"
+    assert names_by_action["knowledge_base.delete"] == "Deleted KB"
+    assert all(item["created_at"] for item in data["recent_activities"])
     assert "trends_7d" in data
     assert "trends_14d" in data
     assert "dates" in data["trends_7d"]
@@ -454,17 +511,30 @@ def test_dashboard_stats_forbidden() -> None:
 
 def test_system_status_admin() -> None:
     _seed_multi_kb()
+
+    async def fake_ocr() -> dict[str, object]:
+        return {"status": "ok", "latency_ms": 1.0}
+
+    async def fake_llm() -> dict[str, object]:
+        return {"status": "not_configured"}
+
     client = TestClient(create_app())
     token = _login(client, "admin")
-    resp = client.get(
-        "/api/v2/dashboard/system-status",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    with (
+        patch("app.api.dashboard._check_ocr", fake_ocr),
+        patch("app.api.dashboard._check_llm", fake_llm),
+    ):
+        resp = client.get(
+            "/api/v2/dashboard/system-status",
+            headers={"Authorization": f"Bearer {token}"},
+        )
     assert resp.status_code == 200
     data = resp.json()
     assert data["database"]["status"] in ("ok", "down")
     assert data["redis"]["status"] in ("ok", "down")
-    assert data["dashscope"]["status"] in ("ok", "degraded", "down", "not_configured")
+    assert data["ocr"]["status"] in ("ok", "down", "not_configured")
+    assert data["llm"]["status"] in ("ok", "degraded", "down", "not_configured")
+    assert data["dashscope"] == data["llm"]
     assert "uptime_seconds" in data
 
 

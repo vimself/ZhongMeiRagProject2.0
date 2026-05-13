@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import {
   CircleCheck,
-  CircleClose,
   Edit,
   Key,
   Plus,
@@ -19,7 +18,6 @@ import { ElForm, ElFormItem } from 'element-plus/es/components/form/index.mjs'
 import ElIcon from 'element-plus/es/components/icon/index.mjs'
 import ElInput from 'element-plus/es/components/input/index.mjs'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
-import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import ElPagination from 'element-plus/es/components/pagination/index.mjs'
 import ElSelect, { ElOption } from 'element-plus/es/components/select/index.mjs'
 import ElSwitch from 'element-plus/es/components/switch/index.mjs'
@@ -35,7 +33,6 @@ import 'element-plus/theme-chalk/el-form-item.css'
 import 'element-plus/theme-chalk/el-icon.css'
 import 'element-plus/theme-chalk/el-input.css'
 import 'element-plus/theme-chalk/el-message.css'
-import 'element-plus/theme-chalk/el-message-box.css'
 import 'element-plus/theme-chalk/el-option.css'
 import 'element-plus/theme-chalk/el-pagination.css'
 import 'element-plus/theme-chalk/el-select.css'
@@ -46,18 +43,10 @@ import 'element-plus/theme-chalk/el-tag.css'
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import {
-  createUser,
-  disableUser,
-  listAuditLogs,
-  listUsers,
-  resetPassword,
-  updateUser,
-} from '@/api/admin'
+import { createUser, listAuditLogs, listUsers, resetPassword, updateUser } from '@/api/admin'
 import type { AdminUserOut, AuditLogOut } from '@/api/types'
-import { useAuthStore } from '@/stores/auth'
+import { formatBeijingDateTime } from '@/utils/time'
 
-const auth = useAuthStore()
 const router = useRouter()
 
 // ── User list state ─────────────────────────────────────────────────
@@ -102,15 +91,7 @@ const auditPageSize = ref(20)
 const auditLoading = ref(false)
 
 // ── Helpers ─────────────────────────────────────────────────────────
-function formatDateTime(iso: string | null): string {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
+const formatDateTime = formatBeijingDateTime
 
 // ── Load users ──────────────────────────────────────────────────────
 async function loadUsers() {
@@ -202,17 +183,6 @@ async function submitDialog() {
   }
 }
 
-// ── Enable user ─────────────────────────────────────────────────────
-async function handleEnable(user: AdminUserOut) {
-  try {
-    await updateUser(user.id, { is_active: true })
-    ElMessage.success('已启用')
-    await loadUsers()
-  } catch {
-    ElMessage.error('操作失败')
-  }
-}
-
 // ── Reset password ──────────────────────────────────────────────────
 function openResetDialog(user: AdminUserOut) {
   resetUserId.value = user.id
@@ -234,30 +204,6 @@ async function submitReset() {
     await loadUsers()
   } finally {
     resetLoading.value = false
-  }
-}
-
-// ── Disable user ────────────────────────────────────────────────────
-async function handleDisable(user: AdminUserOut) {
-  if (user.id === auth.user?.id) {
-    ElMessage.warning('不能停用自己的账号')
-    return
-  }
-  try {
-    await ElMessageBox.confirm(
-      `确定要停用用户 "${user.username}" 吗？停用后该用户将无法登录。`,
-      '停用用户',
-      { confirmButtonText: '确定停用', cancelButtonText: '取消', type: 'warning' },
-    )
-  } catch {
-    return
-  }
-  try {
-    await disableUser(user.id)
-    ElMessage.success('用户已停用')
-    await loadUsers()
-  } catch {
-    ElMessage.error('操作失败')
   }
 }
 
@@ -397,22 +343,13 @@ onMounted(loadUsers)
             <span class="time-cell">{{ formatDateTime(row.created_at) }}</span>
           </template>
         </ElTableColumn>
-        <ElTableColumn label="操作" width="260" fixed="right">
+        <ElTableColumn label="操作" width="270" fixed="right">
           <template #default="{ row }: { row: AdminUserOut }">
             <div class="action-btns">
               <ElButton :icon="Edit" text size="small" @click="openEditDialog(row)">编辑</ElButton>
               <ElButton :icon="Key" text size="small" @click="openResetDialog(row)"
                 >重置密码</ElButton
               >
-              <ElButton
-                :icon="row.is_active ? CircleClose : CircleCheck"
-                text
-                size="small"
-                :type="row.is_active ? 'warning' : 'success'"
-                @click="row.is_active ? handleDisable(row) : handleEnable(row)"
-              >
-                {{ row.is_active ? '停用' : '启用' }}
-              </ElButton>
               <ElButton :icon="View" text size="small" @click="openAuditDrawer(row)">审计</ElButton>
             </div>
           </template>
@@ -605,8 +542,15 @@ onMounted(loadUsers)
 
 .action-btns {
   display: flex;
-  gap: 0;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.action-btns :deep(.el-button) {
+  margin-left: 0;
+  padding-inline: 0;
 }
 
 .pagination-wrapper {
@@ -698,7 +642,7 @@ onMounted(loadUsers)
   }
 
   .action-btns {
-    flex-direction: column;
+    justify-content: flex-start;
   }
 }
 </style>

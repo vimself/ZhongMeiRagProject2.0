@@ -7,9 +7,11 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timezone import isoformat_beijing
 from app.models.auth import User
 from app.models.document import Document, KnowledgeChunkV2
 from app.models.knowledge_base import KnowledgeBase, KnowledgeBasePermission
+from app.services.deletion import DOCUMENT_DELETING_STATUS
 from app.services.rag.retriever import RetrievalResult, Retriever
 from app.services.rag.vector_utils import text_term_weights
 
@@ -100,7 +102,7 @@ class SearchService:
         filtered: list[RetrievalResult] = []
         for result in results:
             meta = doc_meta.get(result.document_id)
-            if not meta or meta.get("status") == "disabled":
+            if not meta or meta.get("status") in {"disabled", DOCUMENT_DELETING_STATUS}:
                 continue
             created = meta.get("created_at", "")
             if isinstance(date_from, str) and date_from and created < date_from:
@@ -121,7 +123,7 @@ class SearchService:
         metadata: dict[str, dict[str, str]] = {}
         for row in result.all():
             dt = row[1]
-            created_at = dt.isoformat() if isinstance(dt, datetime) else str(dt or "")
+            created_at = isoformat_beijing(dt) if isinstance(dt, datetime) else str(dt or "")
             metadata[row[0]] = {"created_at": created_at, "status": str(row[2] or "")}
         return metadata
 
@@ -153,7 +155,7 @@ class SearchService:
             select(Document.doc_kind, func.count())
             .where(
                 Document.knowledge_base_id.in_(accessible_ids),
-                Document.status != "disabled",
+                Document.status.notin_(("disabled", DOCUMENT_DELETING_STATUS)),
             )
             .group_by(Document.doc_kind)
         )

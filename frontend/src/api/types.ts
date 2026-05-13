@@ -169,10 +169,38 @@ export interface DocumentListResponse {
   page_size: number
 }
 
-export interface DocumentUploadResponse {
+export interface DocumentDeleteResponse {
+  document_id: string
+  deleted: boolean
+}
+
+export interface DocumentBatchDeleteResponse {
+  deleted_ids: string[]
+  deleted_count: number
+}
+
+export interface DocumentUploadItem {
   document_id: string
   job_id: string
   trace_id: string
+  title: string
+  filename: string
+}
+
+export interface DocumentUploadRejectedItem {
+  filename: string
+  reason: string
+}
+
+export interface DocumentUploadResponse {
+  document_id: string | null
+  job_id: string | null
+  trace_id: string | null
+  documents: DocumentUploadItem[]
+  rejected: DocumentUploadRejectedItem[]
+  accepted_count: number
+  rejected_count: number
+  max_count: number
 }
 
 export interface IngestStepProgress {

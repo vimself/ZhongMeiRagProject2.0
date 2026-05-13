@@ -39,38 +39,43 @@ import 'element-plus/theme-chalk/el-table.css'
 import 'element-plus/theme-chalk/el-table-column.css'
 import 'element-plus/theme-chalk/el-tag.css'
 import 'element-plus/theme-chalk/el-upload.css'
-import type { UploadRequestOptions } from 'element-plus'
+import type { UploadFile as ElementUploadFile, UploadFiles, UploadUserFile } from 'element-plus'
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import {
   deleteDocument,
+  deleteDocuments,
   getDocument,
   getIngestProgress,
   listDocuments,
   retryDocument,
-  uploadDocument,
+  uploadDocuments,
 } from '@/api/document'
 import { getKnowledgeBase } from '@/api/knowledge'
 import { pdfPreviewUrl, signAssetToken, signPdfToken } from '@/api/pdfPreview'
 import type { AssetOut, DocumentDetailResponse, DocumentOut, IngestJobProgress } from '@/api/types'
+import { formatBeijingDateTime } from '@/utils/time'
 
 const route = useRoute()
 const router = useRouter()
-type UploadAjaxLikeError = Error & { status: number; method: string; url: string }
 const kbId = computed(() => String(route.params.kbId))
 const kbName = ref('')
 const kbRole = ref<string | null>(null)
 const canUpload = computed(() => ['admin', 'owner', 'editor'].includes(kbRole.value || ''))
 const canDelete = computed(() => ['admin', 'owner'].includes(kbRole.value || ''))
+const MAX_BATCH_FILES = 50
 
 const docs = ref<DocumentOut[]>([])
+const selectedDocumentIds = ref<string[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 const loading = ref(false)
 const search = ref('')
 const statusFilter = ref('')
+const uploadFiles = ref<UploadUserFile[]>([])
+const uploading = ref(false)
 const uploadPercent = ref(0)
 
 const progressMap = reactive<Record<string, IngestJobProgress>>({})
@@ -84,21 +89,13 @@ const statusOptions = [
   { label: '全部状态', value: '' },
   { label: '排队', value: 'pending' },
   { label: 'OCR', value: 'ocr' },
-  { label: '解析', value: 'parsing' },
-  { label: '索引', value: 'indexing' },
+  { label: 'Embedding', value: 'embedding' },
+  { label: '向量入库', value: 'vector_indexing' },
   { label: '完成', value: 'ready' },
   { label: '失败', value: 'failed' },
 ]
 
-function formatDateTime(iso: string | null): string {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
+const formatDateTime = formatBeijingDateTime
 
 function formatSize(size: number): string {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
@@ -109,8 +106,10 @@ function statusLabel(status: string): string {
   const map: Record<string, string> = {
     pending: '排队',
     ocr: 'OCR',
-    parsing: '解析',
-    indexing: '索引',
+    parsing: 'Embedding',
+    indexing: '向量入库',
+    embedding: 'Embedding',
+    vector_indexing: '向量入库',
     ready: '完成',
     failed: '失败',
     disabled: '已删除',
@@ -122,24 +121,41 @@ function statusType(status: string): 'success' | 'warning' | 'danger' | 'info' {
   if (status === 'ready') return 'success'
   if (status === 'failed') return 'danger'
   if (status === 'disabled') return 'info'
+  if (status === 'vector_indexing' || status === 'indexing') return 'info'
   return 'warning'
 }
 
-function docKindLabel(kind: string): string {
-  const map: Record<string, string> = {
-    plan: '方案',
-    spec: '规范',
-    drawing: '图纸',
-    quantity: '工程量',
-    other: '其他',
-  }
-  return map[kind] || kind
-}
-
 function progressOf(row: DocumentOut): number {
-  if (row.status === 'ready') return 100
+  if (statusOf(row) === 'ready') return 100
   return progressMap[row.id]?.progress ?? 0
 }
+
+function statusOf(row: DocumentOut): string {
+  return progressMap[row.id]?.document_status || row.status
+}
+
+function progressStatusOf(row: DocumentOut): 'success' | 'exception' | undefined {
+  const status = statusOf(row)
+  if (status === 'ready') return 'success'
+  if (status === 'failed') return 'exception'
+  return undefined
+}
+
+const queuedUploadFiles = computed<File[]>(() => {
+  const files: File[] = []
+  uploadFiles.value.forEach((item) => {
+    if (item.raw instanceof File) {
+      files.push(item.raw)
+    }
+  })
+  return files
+})
+
+const uploadLabel = computed(() => {
+  const count = queuedUploadFiles.value.length
+  if (count === 0) return `拖拽 PDF 或点击选择，最多 ${MAX_BATCH_FILES} 份`
+  return `${count} 份 PDF 待上传`
+})
 
 async function loadKnowledgeBase() {
   const resp = await getKnowledgeBase(kbId.value)
@@ -157,6 +173,7 @@ async function loadDocuments() {
       status: statusFilter.value || undefined,
     })
     docs.value = resp.data.items
+    selectedDocumentIds.value = []
     total.value = resp.data.total
     docs.value.forEach((doc) => {
       if (!['ready', 'failed', 'disabled'].includes(doc.status)) {
@@ -170,39 +187,82 @@ async function loadDocuments() {
   }
 }
 
+function handleSelectionChange(selection: DocumentOut[]) {
+  selectedDocumentIds.value = selection.map((item) => item.id)
+}
+
 function handleSearch() {
   page.value = 1
   loadDocuments()
 }
 
-async function uploadRequest(options: UploadRequestOptions) {
+function isPdfFile(file: File): boolean {
+  return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+}
+
+function syncUploadFiles(nextFiles: UploadFiles) {
+  const validFiles = nextFiles.filter((item) => item.raw && isPdfFile(item.raw))
+  if (validFiles.length !== nextFiles.length) {
+    ElMessage.warning('已忽略非 PDF 文件')
+  }
+  uploadFiles.value = validFiles.slice(0, MAX_BATCH_FILES) as UploadUserFile[]
+}
+
+function handleUploadChange(_file: ElementUploadFile, files: UploadFiles) {
+  syncUploadFiles(files)
+}
+
+function handleUploadExceed() {
+  ElMessage.warning(`一次最多上传 ${MAX_BATCH_FILES} 份文档`)
+}
+
+function clearUploadFiles() {
+  uploadFiles.value = []
   uploadPercent.value = 0
+}
+
+async function submitUploadBatch() {
+  const files = queuedUploadFiles.value
+  if (files.length === 0) {
+    ElMessage.warning('请先选择 PDF 文件')
+    return
+  }
+  uploadPercent.value = 0
+  uploading.value = true
   try {
-    const rawFile = options.file as File
-    await uploadDocument(
+    const resp = await uploadDocuments(
       kbId.value,
       {
-        file: rawFile,
-        title: rawFile.name.replace(/\.pdf$/i, ''),
+        files,
         doc_kind: 'other',
       },
       (percent) => {
         uploadPercent.value = percent
       },
     )
-    options.onSuccess?.({})
-    ElMessage.success('文档已入队')
+    const acceptedCount = resp.data.accepted_count || resp.data.documents.length
+    const rejectedCount = resp.data.rejected_count || resp.data.rejected.length
+    if (acceptedCount > 0) {
+      ElMessage.success(`${acceptedCount} 份文档已入队`)
+    }
+    if (rejectedCount > 0) {
+      const duplicateNames = resp.data.rejected
+        .filter((item) => item.reason === '文件名已存在')
+        .map((item) => item.filename)
+      const otherRejectedCount = rejectedCount - duplicateNames.length
+      if (duplicateNames.length > 0) {
+        ElMessage.warning(`已跳过重复文件名：${duplicateNames.join('、')}`)
+      }
+      if (otherRejectedCount > 0) {
+        ElMessage.warning(`${otherRejectedCount} 份文档未通过校验`)
+      }
+    }
+    clearUploadFiles()
     await loadDocuments()
-  } catch (error) {
-    const uploadError = (
-      error instanceof Error ? error : new Error('上传失败')
-    ) as UploadAjaxLikeError
-    uploadError.status = uploadError.status ?? 0
-    uploadError.method = uploadError.method ?? 'POST'
-    uploadError.url = uploadError.url ?? ''
-    options.onError?.(uploadError)
+  } catch {
     ElMessage.error('上传失败')
   } finally {
+    uploading.value = false
     uploadPercent.value = 0
   }
 }
@@ -270,7 +330,7 @@ async function handleRetry(row: DocumentOut) {
 async function handleDelete(row: DocumentOut) {
   try {
     await ElMessageBox.confirm(
-      `确定要删除文档 "${row.title}" 吗？删除后将从知识库列表、搜索和问答中移除。后台会保留审计记录，当前不提供恢复入口。`,
+      `确定要删除文档 "${row.title}" 吗？删除后无法找回，数据库记录、OCR 结果和向量数据都会被清空。`,
       '删除文档',
       {
         confirmButtonText: '删除',
@@ -287,6 +347,31 @@ async function handleDelete(row: DocumentOut) {
     await loadDocuments()
   } catch {
     ElMessage.error('删除失败')
+  }
+}
+
+async function handleBatchDelete() {
+  const ids = selectedDocumentIds.value
+  if (ids.length === 0) return
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除选中的 ${ids.length} 个文档吗？删除后无法找回，数据库记录、OCR 结果和向量数据都会被清空。`,
+      '批量删除文档',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+  try {
+    const resp = await deleteDocuments(kbId.value, ids)
+    ElMessage.success(`已删除 ${resp.data.deleted_count} 个文档`)
+    await loadDocuments()
+  } catch {
+    ElMessage.error('批量删除失败')
   }
 }
 
@@ -352,18 +437,34 @@ onUnmounted(() => {
     </header>
 
     <section class="toolbar" :class="{ 'toolbar--filters-only': !canUpload }">
-      <ElUpload
-        v-if="canUpload"
-        drag
-        accept="application/pdf,.pdf"
-        :show-file-list="false"
-        :http-request="uploadRequest"
-      >
-        <div class="upload-inline">
-          <UploadFilled />
-          <span>拖拽 PDF 或点击上传</span>
+      <div v-if="canUpload" class="upload-panel">
+        <ElUpload
+          v-model:file-list="uploadFiles"
+          drag
+          multiple
+          accept="application/pdf,.pdf"
+          :auto-upload="false"
+          :disabled="uploading"
+          :limit="MAX_BATCH_FILES"
+          :show-file-list="false"
+          :on-change="handleUploadChange"
+          :on-exceed="handleUploadExceed"
+        >
+          <div class="upload-inline">
+            <UploadFilled />
+            <span>{{ uploadLabel }}</span>
+          </div>
+        </ElUpload>
+        <div v-if="queuedUploadFiles.length > 0" class="upload-actions">
+          <span>{{ queuedUploadFiles.length }} / {{ MAX_BATCH_FILES }}</span>
+          <ElButton type="primary" size="small" :loading="uploading" @click="submitUploadBatch">
+            上传入队
+          </ElButton>
+          <ElButton text size="small" :disabled="uploading" @click="clearUploadFiles">
+            清空
+          </ElButton>
         </div>
-      </ElUpload>
+      </div>
       <div class="filters">
         <ElInput
           v-model="search"
@@ -382,51 +483,68 @@ onUnmounted(() => {
           />
         </ElSelect>
         <ElButton :icon="Refresh" @click="loadDocuments">刷新</ElButton>
+        <ElButton
+          v-if="canDelete"
+          :icon="Delete"
+          type="danger"
+          :disabled="selectedDocumentIds.length === 0"
+          @click="handleBatchDelete"
+        >
+          批量删除
+        </ElButton>
       </div>
     </section>
 
     <ElProgress v-if="uploadPercent > 0" :percentage="uploadPercent" class="upload-progress" />
 
     <section class="table-shell">
-      <ElTable v-loading="loading" :data="docs" stripe style="width: 100%">
-        <ElTableColumn label="文件名" min-width="220">
+      <ElTable
+        v-loading="loading"
+        class="documents-table"
+        :data="docs"
+        stripe
+        style="width: 100%"
+        @selection-change="handleSelectionChange"
+      >
+        <ElTableColumn v-if="canDelete" type="selection" width="44" />
+        <ElTableColumn label="文件名" min-width="300">
           <template #default="{ row }: { row: DocumentOut }">
             <div class="file-cell">
               <DocumentIcon />
               <div>
                 <strong>{{ row.title }}</strong>
-                <span>{{ row.filename }}</span>
               </div>
             </div>
           </template>
         </ElTableColumn>
-        <ElTableColumn label="大小" width="110">
+        <ElTableColumn label="大小" width="88">
           <template #default="{ row }: { row: DocumentOut }">
             {{ formatSize(row.size_bytes) }}
           </template>
         </ElTableColumn>
-        <ElTableColumn label="类型" width="110">
+        <ElTableColumn label="状态" width="86">
           <template #default="{ row }: { row: DocumentOut }">
-            {{ docKindLabel(row.doc_kind) }}
+            <ElTag :type="statusType(statusOf(row))" size="small">
+              {{ statusLabel(statusOf(row)) }}
+            </ElTag>
           </template>
         </ElTableColumn>
-        <ElTableColumn label="状态" width="110">
+        <ElTableColumn label="进度" width="130">
           <template #default="{ row }: { row: DocumentOut }">
-            <ElTag :type="statusType(row.status)" size="small">{{ statusLabel(row.status) }}</ElTag>
+            <ElProgress
+              :percentage="progressOf(row)"
+              :status="progressStatusOf(row)"
+              :stroke-width="8"
+            />
           </template>
         </ElTableColumn>
-        <ElTableColumn label="进度" min-width="160">
-          <template #default="{ row }: { row: DocumentOut }">
-            <ElProgress :percentage="progressOf(row)" :stroke-width="8" />
-          </template>
-        </ElTableColumn>
-        <ElTableColumn label="上传者" width="120" prop="uploader_name" />
-        <ElTableColumn label="创建时间" width="150">
+        <ElTableColumn label="上传者" width="110" prop="uploader_name" />
+        <ElTableColumn label="创建时间" width="108">
           <template #default="{ row }: { row: DocumentOut }">
             {{ formatDateTime(row.created_at) }}
           </template>
         </ElTableColumn>
-        <ElTableColumn label="操作" width="270" fixed="right">
+        <ElTableColumn label="操作" width="220" align="right">
           <template #default="{ row }: { row: DocumentOut }">
             <div class="action-btns">
               <ElButton :icon="View" text size="small" @click="openDetail(row)">详情</ElButton>
@@ -577,6 +695,11 @@ onUnmounted(() => {
   grid-template-columns: 1fr;
 }
 
+.upload-panel {
+  display: grid;
+  gap: 8px;
+}
+
 .upload-inline {
   display: flex;
   gap: 10px;
@@ -592,9 +715,22 @@ onUnmounted(() => {
   height: 24px;
 }
 
+.upload-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.upload-actions span {
+  color: #64748b;
+  font-size: 12px;
+}
+
 .filters {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 160px auto;
+  grid-template-columns: minmax(220px, 1fr) 160px auto auto;
   gap: 10px;
   align-content: center;
   padding: 14px;
@@ -618,7 +754,7 @@ onUnmounted(() => {
 .file-cell {
   display: flex;
   gap: 10px;
-  align-items: center;
+  align-items: flex-start;
 }
 
 .file-cell svg {
@@ -628,29 +764,32 @@ onUnmounted(() => {
   color: #2563eb;
 }
 
-.file-cell strong,
-.file-cell span {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.file-cell > div {
+  min-width: 0;
 }
 
 .file-cell strong {
-  max-width: 320px;
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: normal;
   font-size: 14px;
-}
-
-.file-cell span {
-  max-width: 320px;
-  color: #64748b;
-  font-size: 12px;
+  line-height: 1.45;
 }
 
 .action-btns {
   display: flex;
-  gap: 0;
-  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: nowrap;
+  min-width: 198px;
+}
+
+.documents-table .action-btns :deep(.el-button) {
+  flex: 0 0 auto;
+  min-width: 58px;
+  padding-right: 4px;
+  padding-left: 4px;
+  margin-left: 0;
 }
 
 .empty-wrapper {

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import current_user
 from app.core.config import get_settings
+from app.core.timezone import beijing_now
 from app.db.session import get_db_session
 from app.models.auth import AuditLog, AuthLoginAttempt, LoginRecord, User
 from app.schemas.auth import (
@@ -131,7 +132,7 @@ async def login(
     await login_failure_limiter.clear(username, ip_address)
     access_token = create_access_token(subject=user.id, role=user.role)
     refresh_token = create_refresh_token(subject=user.id)
-    user.last_login_at = datetime.now(UTC)
+    user.last_login_at = beijing_now()
     db.add(
         LoginRecord(
             user_id=user.id,
@@ -198,7 +199,7 @@ async def logout(
         select(LoginRecord).where(LoginRecord.refresh_token_jti == token_data.jti)
     )
     if login_record is not None and login_record.revoked_at is None:
-        login_record.revoked_at = datetime.now(UTC)
+        login_record.revoked_at = beijing_now()
         await _record_audit(
             db,
             actor_user_id=login_record.user_id,

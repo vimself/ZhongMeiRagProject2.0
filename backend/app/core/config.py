@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     ocr_max_poll_minutes: int = 60
     upload_dir: str = "uploads/documents"
     upload_max_mb: int = 200
+    upload_max_files: int = 50
     embed_batch_size: int = 25
     chunk_tokens: int = 512
     chunk_overlap: int = 64

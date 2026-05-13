@@ -8,6 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import Document, KnowledgeChunkV2
+from app.services.deletion import DOCUMENT_DELETING_STATUS
 from app.services.rag.vector_utils import (
     dense_vector_literal,
     sparse_vector_literal,
@@ -105,7 +106,7 @@ class Retriever:
             .join(Document, Document.id == KnowledgeChunkV2.document_id)
             .where(
                 KnowledgeChunkV2.knowledge_base_id == kb_id,
-                Document.status != "disabled",
+                Document.status.notin_(("disabled", DOCUMENT_DELETING_STATUS)),
             )
         )
         doc_kind = filters.get("doc_kind")
@@ -128,7 +129,10 @@ class Retriever:
         result = await self.db.execute(
             select(KnowledgeChunkV2)
             .join(Document, Document.id == KnowledgeChunkV2.document_id)
-            .where(KnowledgeChunkV2.id.in_(unique_ids), Document.status != "disabled")
+            .where(
+                KnowledgeChunkV2.id.in_(unique_ids),
+                Document.status.notin_(("disabled", DOCUMENT_DELETING_STATUS)),
+            )
         )
         rows = list(result.scalars().all())
         row_map = {row.id: row for row in rows}
@@ -250,7 +254,10 @@ class Retriever:
 
     @staticmethod
     def _seekdb_filters(kb_id: str, filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-        clauses = ["c.knowledge_base_id = :kb_id", "d.status != 'disabled'"]
+        clauses = [
+            "c.knowledge_base_id = :kb_id",
+            "d.status NOT IN ('disabled', 'deleting')",
+        ]
         params: dict[str, Any] = {"kb_id": kb_id}
         doc_kind = filters.get("doc_kind")
         scheme_type = filters.get("scheme_type")

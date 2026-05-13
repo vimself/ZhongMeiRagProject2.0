@@ -10,7 +10,8 @@ from app.db.base import Base
 from app.db.session import AsyncSessionLocal, engine
 from app.main import create_app
 from app.models.auth import AuditLog, User
-from app.models.document import Document
+from app.models.chat import ChatMessage, ChatMessageCitation, ChatSession
+from app.models.document import Document, KnowledgeChunkV2
 from app.models.knowledge_base import KnowledgeBasePermission
 from app.security.login_limiter import login_failure_limiter
 from app.security.password import hash_password
@@ -275,7 +276,7 @@ class TestKnowledgeBaseCRUD:
         assert "knowledge_base.update" in actions
         assert tokens["user"]["id"] in actor_ids
 
-    def test_disable_knowledge_base(self) -> None:
+    def test_delete_knowledge_base_hard_deletes_documents_and_detaches_chat(self) -> None:
         _seed_admin()
         client = TestClient(create_app())
         tokens = _login(client)
@@ -287,6 +288,63 @@ class TestKnowledgeBaseCRUD:
         )
         kb_id = create_resp.json()["id"]
 
+        async def _add_related() -> None:
+            async with AsyncSessionLocal() as session:
+                document = Document(
+                    id="doc-hard-delete",
+                    knowledge_base_id=kb_id,
+                    uploader_id=tokens["user"]["id"],
+                    title="待删除文档",
+                    filename="delete.pdf",
+                    mime="application/pdf",
+                    size_bytes=10,
+                    sha256="delete-sha",
+                    storage_path="uploads/documents/delete.pdf",
+                    status="ready",
+                )
+                chat_session = ChatSession(
+                    id="chat-hard-delete",
+                    user_id=tokens["user"]["id"],
+                    knowledge_base_id=kb_id,
+                    title="历史会话",
+                )
+                session.add_all([document, chat_session])
+                await session.flush()
+                chat_message = ChatMessage(
+                    id="message-hard-delete",
+                    session_id=chat_session.id,
+                    role="assistant",
+                    content="旧答案",
+                )
+                session.add(chat_message)
+                session.add(
+                    ChatMessageCitation(
+                        message_id=chat_message.id,
+                        index=1,
+                        document_id=document.id,
+                        knowledge_base_id=kb_id,
+                        document_title=document.title,
+                        section_path_json=[],
+                        section_text="旧证据",
+                        snippet="旧证据",
+                    )
+                )
+                session.add(
+                    KnowledgeChunkV2(
+                        knowledge_base_id=kb_id,
+                        document_id=document.id,
+                        chunk_index=0,
+                        content="旧向量内容",
+                        section_path=["1"],
+                        section_id="1",
+                        doc_kind="plan",
+                        tokens=4,
+                        sha256="chunk-hard-delete",
+                    )
+                )
+                await session.commit()
+
+        asyncio.run(_add_related())
         resp = client.delete(
             f"/api/v2/knowledge-bases/{kb_id}",
             headers=_auth_header(tokens["access_token"]),
@@ -301,7 +359,22 @@ class TestKnowledgeBaseCRUD:
         )
         assert list_resp.json()["total"] == 0
 
-    def test_disable_knowledge_base_audit_log(self) -> None:
+        async def _check_deleted() -> tuple[int, int, str | None, int]:
+            async with AsyncSessionLocal() as session:
+                return (
+                    len(list(await session.scalars(select(Document)))),
+                    len(list(await session.scalars(select(KnowledgeChunkV2)))),
+                    await session.scalar(
+                        select(ChatSession.knowledge_base_id).where(
+                            ChatSession.id == "chat-hard-delete"
+                        )
+                    ),
+                    len(list(await session.scalars(select(ChatMessageCitation)))),
+                )
+
+        assert asyncio.run(_check_deleted()) == (0, 0, None, 0)
+
+    def test_delete_knowledge_base_audit_log(self) -> None:
         _seed_admin()
         client = TestClient(create_app())
         tokens = _login(client)
@@ -323,7 +396,7 @@ class TestKnowledgeBaseCRUD:
                 rows = (
                     await session.execute(
                         select(AuditLog.action, AuditLog.actor_user_id).where(
-                            AuditLog.action == "knowledge_base.disable"
+                            AuditLog.action == "knowledge_base.delete"
                         )
                     )
                 ).all()
@@ -333,7 +406,7 @@ class TestKnowledgeBaseCRUD:
                 )
 
         actions, actor_ids = asyncio.run(_check())
-        assert "knowledge_base.disable" in actions
+        assert "knowledge_base.delete" in actions
         assert tokens["user"]["id"] in actor_ids
 
     def test_get_nonexistent_kb_returns_404(self) -> None:
@@ -1048,7 +1121,7 @@ class TestAdminKnowledgeBase:
         assert resp.status_code == 200
         assert resp.json()["total"] == 1
 
-    def test_admin_list_kbs_filter_active(self) -> None:
+    def test_admin_list_kbs_after_delete_omits_removed_row(self) -> None:
         _seed_admin()
         client = TestClient(create_app())
         tokens = _login(client)
@@ -1066,27 +1139,24 @@ class TestAdminKnowledgeBase:
             json={"name": "保持启用"},
         )
 
-        # Disable one
         client.delete(
             f"/api/v2/knowledge-bases/{kb_id}",
             headers=_auth_header(tokens["access_token"]),
         )
 
-        # Filter active only
         resp = client.get(
             "/api/v2/admin/knowledge-bases?is_active=true",
             headers=_auth_header(tokens["access_token"]),
         )
         assert resp.json()["total"] == 1
 
-        # Filter inactive only
         resp = client.get(
             "/api/v2/admin/knowledge-bases?is_active=false",
             headers=_auth_header(tokens["access_token"]),
         )
-        assert resp.json()["total"] == 1
+        assert resp.json()["total"] == 0
 
-    def test_admin_can_view_permissions_for_inactive_kb(self) -> None:
+    def test_deleted_kb_permissions_are_removed(self) -> None:
         _seed_admin()
         client = TestClient(create_app())
         tokens = _login(client)
@@ -1107,8 +1177,7 @@ class TestAdminKnowledgeBase:
             f"/api/v2/admin/knowledge-bases/{kb_id}/permissions",
             headers=_auth_header(tokens["access_token"]),
         )
-        assert resp.status_code == 200
-        assert resp.json()[0]["role"] == "owner"
+        assert resp.status_code == 404
 
     def test_normal_user_cannot_access_admin_kb(self) -> None:
         _seed_admin()

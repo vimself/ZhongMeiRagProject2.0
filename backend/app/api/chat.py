@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -18,6 +18,7 @@ from app.api.auth import _record_audit
 from app.api.deps import DbSession, current_user
 from app.api.knowledge_base_deps import _get_user_kb_role
 from app.core.config import get_settings
+from app.core.timezone import beijing_now, isoformat_beijing
 from app.models.auth import User
 from app.models.chat import ChatMessage, ChatMessageCitation, ChatSession
 from app.models.knowledge_base import KnowledgeBase
@@ -59,11 +60,7 @@ async def _ensure_kb_viewer(db: Any, user: User, kb_id: str) -> KnowledgeBase:
 
 
 def _iso(value: datetime | None) -> str:
-    if value is None:
-        return ""
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return value.isoformat()
+    return isoformat_beijing(value)
 
 
 def _is_no_evidence_answer(answer: str) -> bool:
@@ -226,7 +223,9 @@ async def chat_stream(
         session = await db.get(ChatSession, body.session_id)
         if session is None or session.user_id != user.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="会话不存在")
-        if session.knowledge_base_id != kb.id:
+        if session.knowledge_base_id is None:
+            session.knowledge_base_id = kb.id
+        elif session.knowledge_base_id != kb.id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="会话所属知识库与当前请求不一致",
@@ -384,7 +383,7 @@ async def _persist_turn(
     from app.db.session import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:
-        turn_started_at = datetime.now(UTC)
+        turn_started_at = beijing_now()
         user_msg = ChatMessage(
             session_id=session_id,
             role="user",

@@ -14,6 +14,7 @@ from app.api.knowledge_base_deps import (
     RequireViewer,
     _get_user_kb_role,
 )
+from app.core.timezone import beijing_now, isoformat_beijing
 from app.db.session import get_db_session
 from app.models.auth import User
 from app.models.document import Document
@@ -26,6 +27,12 @@ from app.schemas.knowledge_base import (
     PermissionOut,
     PermissionUpdateRequest,
     PermissionUserOut,
+)
+from app.services.deletion import (
+    DOCUMENT_DELETING_STATUS,
+    collect_document_artifact_paths,
+    delete_artifact_files,
+    hard_delete_knowledge_base,
 )
 
 router = APIRouter(prefix="/api/v2/knowledge-bases", tags=["knowledge-base"])
@@ -54,9 +61,9 @@ def _kb_out(
         document_count=document_count,
         active_document_count=active_document_count,
         permission_count=permission_count,
-        deleted_at=kb.updated_at.isoformat() if not kb.is_active else None,
-        created_at=kb.created_at.isoformat(),
-        updated_at=kb.updated_at.isoformat(),
+        deleted_at=isoformat_beijing(kb.updated_at) if not kb.is_active else None,
+        created_at=isoformat_beijing(kb.created_at),
+        updated_at=isoformat_beijing(kb.updated_at),
     )
 
 
@@ -72,8 +79,8 @@ def _permission_out(
         username=username,
         display_name=display_name,
         role=permission.role,
-        created_at=permission.created_at.isoformat(),
-        updated_at=permission.updated_at.isoformat(),
+        created_at=isoformat_beijing(permission.created_at),
+        updated_at=isoformat_beijing(permission.updated_at),
     )
 
 
@@ -121,7 +128,12 @@ async def _admin_kb_archive_counts(
             select(
                 Document.knowledge_base_id,
                 func.count(Document.id),
-                func.sum(case((Document.status != "disabled", 1), else_=0)),
+                func.sum(
+                    case(
+                        (Document.status.notin_(("disabled", DOCUMENT_DELETING_STATUS)), 1),
+                        else_=0,
+                    )
+                ),
             )
             .where(Document.knowledge_base_id.in_(kb_ids))
             .group_by(Document.knowledge_base_id)
@@ -233,7 +245,7 @@ async def _apply_permission_update(
         target_type="knowledge_base",
         target_id=kb.id,
         request=request,
-        details={"user_count": len(body.permissions)},
+        details={"name": kb.name, "user_count": len(body.permissions)},
     )
     await db.commit()
 
@@ -430,10 +442,9 @@ async def update_knowledge_base(
 
 
 @router.delete("/{kb_id}", response_model=KnowledgeBaseOut)
-async def disable_knowledge_base(
+async def delete_knowledge_base(
     kb_id: str,
     request: Request,
-    result: RequireOwner,
     user: CurrentUser,
     db: DbSession,
 ) -> KnowledgeBaseOut:
@@ -442,27 +453,40 @@ async def disable_knowledge_base(
             status_code=status.HTTP_403_FORBIDDEN, detail="只有管理员可以删除知识库"
         )
 
-    kb, role = result
-    kb.is_active = False
+    kb = await db.get(KnowledgeBase, kb_id)
+    if kb is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="知识库不存在")
+    documents = list(await db.scalars(select(Document).where(Document.knowledge_base_id == kb.id)))
+    document_ids = [document.id for document in documents]
+    active_document_count = sum(
+        1 for document in documents if document.status not in {"disabled", DOCUMENT_DELETING_STATUS}
+    )
+    artifact_paths = await collect_document_artifact_paths(db, document_ids)
+    creator_username, creator_name = await _creator_identity_for_kb(db, kb)
+    deleted_payload = _kb_out(
+        kb,
+        my_role="admin",
+        creator_username=creator_username,
+        creator_name=creator_name,
+        document_count=len(document_ids),
+        active_document_count=active_document_count,
+    )
+    deleted_payload.is_active = False
+    deleted_payload.deleted_at = isoformat_beijing(beijing_now())
 
     await _record_audit(
         db,
         actor_user_id=user.id,
-        action="knowledge_base.disable",
+        action="knowledge_base.delete",
         target_type="knowledge_base",
         target_id=kb.id,
         request=request,
-        details={"name": kb.name},
+        details={"name": kb.name, "document_count": len(document_ids)},
     )
+    await hard_delete_knowledge_base(db, kb.id)
     await db.commit()
-    await db.refresh(kb)
-    creator_username, creator_name = await _creator_identity_for_kb(db, kb)
-    return _kb_out(
-        kb,
-        my_role=role,
-        creator_username=creator_username,
-        creator_name=creator_name,
-    )
+    delete_artifact_files(artifact_paths)
+    return deleted_payload
 
 
 @router.get("/{kb_id}/permissions", response_model=list[PermissionOut])
@@ -521,18 +545,19 @@ async def admin_list_knowledge_bases(
     if user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="需要管理员权限")
 
-    query = select(KnowledgeBase)
-    count_query = select(func.count()).select_from(KnowledgeBase)
+    active_filter = True if is_active is None else is_active
+    query = select(KnowledgeBase).where(KnowledgeBase.is_active == active_filter)
+    count_query = (
+        select(func.count())
+        .select_from(KnowledgeBase)
+        .where(KnowledgeBase.is_active == active_filter)
+    )
 
     if search:
         pattern = f"%{search}%"
         condition = KnowledgeBase.name.ilike(pattern) | KnowledgeBase.description.ilike(pattern)
         query = query.where(condition)
         count_query = count_query.where(condition)
-    if is_active is not None:
-        query = query.where(KnowledgeBase.is_active == is_active)
-        count_query = count_query.where(KnowledgeBase.is_active == is_active)
-
     total = (await db.execute(count_query)).scalar_one()
     offset = (page - 1) * page_size
     query = query.order_by(KnowledgeBase.created_at.desc()).offset(offset).limit(page_size)

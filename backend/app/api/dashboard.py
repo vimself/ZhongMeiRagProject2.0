@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, Any
 
 import httpx
@@ -12,16 +12,38 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import _record_audit
 from app.api.deps import DbSession, require_admin
 from app.core.config import get_settings
+from app.core.timezone import as_beijing, beijing_now, isoformat_beijing
 from app.models.auth import AuditLog, User
 from app.models.chat import ChatMessage, ChatSession
 from app.models.document import Document, DocumentAsset, DocumentIngestJob, KnowledgeChunkV2
 from app.models.knowledge_base import KnowledgeBase
 from app.schemas.search import DashboardStats, SystemStatus
+from app.services.ocr.client import DeepSeekOCRClient
 
 router = APIRouter(prefix="/api/v2/dashboard", tags=["dashboard"])
 AdminUser = Annotated[User, Depends(require_admin)]
 
 _app_start_time = time.monotonic()
+
+_KB_ACTIVITY_ACTIONS = (
+    "knowledge_base.create",
+    "knowledge_base.delete",
+    "knowledge_base.permissions.update",
+)
+
+_KB_ACTIVITY_LABELS = {
+    "knowledge_base.create": "创建知识库",
+    "knowledge_base.delete": "删除知识库",
+    "knowledge_base.permissions.update": "修改权限",
+}
+
+
+def _audit_kb_name(log: AuditLog, current_name: str | None) -> str:
+    details = log.details or {}
+    detail_name = details.get("name")
+    if isinstance(detail_name, str) and detail_name.strip():
+        return detail_name.strip()
+    return current_name or ""
 
 
 @router.get("/stats", response_model=DashboardStats)
@@ -66,22 +88,28 @@ async def dashboard_stats(
     ingest_by_status = {row[0]: row[1] for row in ingest_rows}
 
     recent_rows = (
-        (await db.execute(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(20)))
-        .scalars()
-        .all()
-    )
+        await db.execute(
+            select(AuditLog, User.username, KnowledgeBase.name)
+            .outerjoin(User, AuditLog.actor_user_id == User.id)
+            .outerjoin(KnowledgeBase, AuditLog.target_id == KnowledgeBase.id)
+            .where(AuditLog.action.in_(_KB_ACTIVITY_ACTIONS))
+            .order_by(AuditLog.created_at.desc())
+            .limit(20)
+        )
+    ).all()
     recent_activities = [
         {
             "action": a.action,
-            "target_type": a.target_type,
+            "action_label": _KB_ACTIVITY_LABELS.get(a.action, a.action),
+            "actor_username": username or "未知用户",
+            "knowledge_base_name": _audit_kb_name(a, kb_name),
             "target_id": a.target_id,
-            "ip_address": a.ip_address,
-            "created_at": a.created_at.isoformat() if a.created_at else "",
+            "created_at": isoformat_beijing(a.created_at),
         }
-        for a in recent_rows
+        for a, username, kb_name in recent_rows
     ]
 
-    now = datetime.now(UTC)
+    now = beijing_now()
     trends_7d = await _build_trends(db, now, 7)
     trends_14d = await _build_trends(db, now, 14)
 
@@ -131,7 +159,10 @@ async def _build_trends(db: AsyncSession, now: datetime, days: int) -> dict[str,
         created_at = row[0]
         if not isinstance(created_at, datetime):
             continue
-        day = created_at.strftime("%Y-%m-%d")
+        day_value = as_beijing(created_at)
+        if day_value is None:
+            continue
+        day = day_value.strftime("%Y-%m-%d")
         if day in doc_counts:
             doc_counts[day] += 1
 
@@ -142,7 +173,10 @@ async def _build_trends(db: AsyncSession, now: datetime, days: int) -> dict[str,
         created_at = row[0]
         if not isinstance(created_at, datetime):
             continue
-        day = created_at.strftime("%Y-%m-%d")
+        day_value = as_beijing(created_at)
+        if day_value is None:
+            continue
+        day = day_value.strftime("%Y-%m-%d")
         if day in chat_counts:
             chat_counts[day] += 1
 
@@ -190,7 +224,8 @@ async def system_status(
         redis_status = "down"
         redis_latency = 0.0
 
-    dashscope = await _check_dashscope()
+    ocr = await _check_ocr()
+    llm = await _check_llm()
 
     uptime = time.monotonic() - _app_start_time
 
@@ -207,12 +242,30 @@ async def system_status(
     return SystemStatus(
         database={"status": db_status, "latency_ms": db_latency},
         redis={"status": redis_status, "latency_ms": redis_latency},
-        dashscope=dashscope,
+        ocr=ocr,
+        llm=llm,
+        dashscope=llm,
         uptime_seconds=round(uptime, 1),
     )
 
 
-async def _check_dashscope() -> dict[str, object]:
+async def _check_ocr() -> dict[str, object]:
+    settings = get_settings()
+    if not settings.ocr_base_url.strip():
+        return {"status": "not_configured"}
+
+    try:
+        t0 = time.monotonic()
+        timeout = httpx.Timeout(connect=2.0, read=2.0, write=2.0, pool=2.0)
+        async with DeepSeekOCRClient(timeout=timeout) as client:
+            await client.healthz()
+        latency = round((time.monotonic() - t0) * 1000, 2)
+        return {"status": "ok", "latency_ms": latency}
+    except Exception:
+        return {"status": "down", "latency_ms": 0.0}
+
+
+async def _check_llm() -> dict[str, object]:
     settings = get_settings()
     if not settings.dashscope_api_key or not settings.dashscope_api_key.get_secret_value():
         return {"status": "not_configured"}

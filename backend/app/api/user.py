@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import _record_audit
 from app.api.deps import current_user
+from app.core.timezone import isoformat_beijing
 from app.db.session import get_db_session
 from app.models.auth import User
 from app.schemas.user import ChangePasswordViaUserRequest, UpdateProfileRequest, UserProfileOut
@@ -40,9 +41,9 @@ def _user_profile_out(user: User) -> UserProfileOut:
         is_active=user.is_active,
         require_password_change=user.require_password_change,
         avatar_url=_avatar_url(user.avatar_path),
-        last_login_at=user.last_login_at.isoformat() if user.last_login_at else None,
-        created_at=user.created_at.isoformat(),
-        updated_at=user.updated_at.isoformat(),
+        last_login_at=isoformat_beijing(user.last_login_at) if user.last_login_at else None,
+        created_at=isoformat_beijing(user.created_at),
+        updated_at=isoformat_beijing(user.updated_at),
     )
 
 

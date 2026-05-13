@@ -32,7 +32,7 @@
 - 提取 `require_document_role()` 到 `knowledge_base_deps.py`，供 `documents.py` 和 `pdf_preview.py` 共用。
 - 新建 `backend/app/api/pdf_preview.py`，包含两个端点：
   - `POST /api/v2/pdf/sign`：签发 5 分钟 PDF 短时 JWT，校验文档存在且用户有 viewer 权限，写审计日志。
-  - `GET /api/v2/pdf/preview`：通过 `PdfTokenUser` 依赖验证 token，校验文档未停用、用户仍有 KB 权限，支持 HTTP Range，返回 `200` 或 `206 Partial Content`，写审计日志。
+  - `GET /api/v2/pdf/preview`：通过 `PdfTokenUser` 依赖验证 token，校验文档仍存在、用户仍有 KB 权限，支持 HTTP Range，返回 `200` 或 `206 Partial Content`，写审计日志。
   - `GET /api/v2/documents/{document_id}/download`：复用 PDF token，提供附件下载 URL。
 - 新建 `backend/app/schemas/pdf_preview.py`（`PdfSignRequest`、`PdfSignResponse`、`AssetSignRequest`、`AssetSignResponse`）。
 - 路由注册到 `main.py`。

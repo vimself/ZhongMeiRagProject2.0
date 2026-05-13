@@ -44,7 +44,7 @@
 | 端点 | 方法 | 功能 |
 |------|------|------|
 | `/api/v2/admin/users` | GET | 分页列表，支持 search/role/is_active 筛选 |
-| `/api/v2/admin/users` | POST | 创建用户，校验 username 唯一性 |
+| `/api/v2/admin/users` | POST | 创建用户，校验 username 唯一性；display_name 可重复 |
 | `/api/v2/admin/users/{id}` | PUT | 更新 display_name/role/is_active/require_password_change |
 | `/api/v2/admin/users/{id}/reset-password` | POST | 重置密码，自动设置 require_password_change=true |
 | `/api/v2/admin/users/{id}` | DELETE | 软删除（停用），不硬删除 |
@@ -98,11 +98,11 @@
 **AdminUsersView（管理员用户管理）**
 - 表格：用户名、展示名、角色、状态、需改密标志、最后登录、创建时间、操作列。
 - 工具栏：搜索输入框、角色筛选、状态筛选、刷新、新建用户按钮。
-- 新建/编辑对话框：字段校验，角色选择，启用状态和改密标志切换。
+- 新建/编辑对话框：字段校验，角色选择，启用状态和改密标志切换；展示名允许重复。
 - 重置密码对话框：带提示信息，密码最少 8 位。
-- 停用操作：带确认弹窗，防止误操作。
+- 启用状态调整：在新建/编辑对话框中通过启用状态开关维护。
 - 审计抽屉：展示用户相关 audit_logs，支持分页，action 中文映射。
-- 操作按钮：编辑、重置密码、启用/停用、查看审计。
+- 操作按钮：编辑、重置密码、查看审计；启用/停用统一放在编辑对话框内处理。
 
 ### 2.9 路由与权限
 

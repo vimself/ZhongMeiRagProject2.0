@@ -10,18 +10,37 @@ import { useRouter } from 'vue-router'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { LineChart, PieChart } from 'echarts/charts'
+import { LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 
-import type { DashboardStats, SystemStatus } from '@/api/dashboard'
+import type { DashboardActivity, DashboardStats, HealthStatus, SystemStatus } from '@/api/dashboard'
 import { fetchDashboardStats, fetchSystemStatus } from '@/api/dashboard'
+import { formatBeijingDateTime } from '@/utils/time'
 
-use([CanvasRenderer, LineChart, PieChart, GridComponent, TooltipComponent, LegendComponent])
+use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
 
 const router = useRouter()
 const loading = ref(false)
 const stats = ref<DashboardStats | null>(null)
 const sysStatus = ref<SystemStatus | null>(null)
+const formatDateTime = formatBeijingDateTime
+
+interface StatusItem {
+  key: string
+  label: string
+  status: string
+  detail: string
+  latency?: number
+  value?: string
+}
+
+const KB_ACTIVITY_LABELS: Record<string, string> = {
+  'knowledge_base.create': '创建知识库',
+  'knowledge_base.delete': '删除知识库',
+  'knowledge_base.permissions.update': '修改权限',
+}
+
+const KB_ACTIVITY_ACTIONS = new Set(Object.keys(KB_ACTIVITY_LABELS))
 
 const statCards = computed(() => {
   if (!stats.value) return []
@@ -33,6 +52,42 @@ const statCards = computed(() => {
     { label: '聊天会话', value: stats.value.chat_session_count },
     { label: '聊天消息', value: stats.value.chat_message_count },
   ]
+})
+
+const recentActivities = computed<DashboardActivity[]>(() => {
+  return (stats.value?.recent_activities ?? [])
+    .map((item) => {
+      const action = String(item.action ?? '')
+      const actionLabel =
+        typeof item.action_label === 'string' && item.action_label.trim()
+          ? item.action_label.trim()
+          : KB_ACTIVITY_LABELS[action]
+      const actorUsername =
+        typeof item.actor_username === 'string' ? item.actor_username.trim() : ''
+      const knowledgeBaseName =
+        typeof item.knowledge_base_name === 'string' ? item.knowledge_base_name.trim() : ''
+      const createdAt = typeof item.created_at === 'string' ? item.created_at : ''
+
+      if (
+        !KB_ACTIVITY_ACTIONS.has(action) ||
+        !actionLabel ||
+        !actorUsername ||
+        !knowledgeBaseName ||
+        !createdAt
+      ) {
+        return null
+      }
+
+      return {
+        ...item,
+        action,
+        action_label: actionLabel,
+        actor_username: actorUsername,
+        knowledge_base_name: knowledgeBaseName,
+        created_at: createdAt,
+      }
+    })
+    .filter((item): item is DashboardActivity => item !== null)
 })
 
 const trendChartOption = computed(() => {
@@ -51,48 +106,71 @@ const trendChartOption = computed(() => {
   }
 })
 
-const docTypeChartOption = computed(() => {
-  if (!stats.value) return {}
-  const entries = Object.entries(stats.value.document_by_kind)
-  return {
-    tooltip: { trigger: 'item' },
-    legend: { orient: 'vertical', right: 10, top: 'center' },
-    series: [
-      {
-        type: 'pie',
-        radius: ['40%', '70%'],
-        data: entries.map(([name, value]) => ({ name, value })),
-        label: { show: true, formatter: '{b}: {c}' },
-      },
-    ],
-  }
-})
-
-const dbStatusClass = computed(() => {
-  if (!sysStatus.value) return 'status-unknown'
-  return sysStatus.value.database.status === 'ok' ? 'status-ok' : 'status-down'
-})
-
-const redisStatusClass = computed(() => {
-  if (!sysStatus.value) return 'status-unknown'
-  return sysStatus.value.redis.status === 'ok' ? 'status-ok' : 'status-down'
-})
-
-const dashscopeStatusClass = computed(() => {
-  if (!sysStatus.value) return 'status-unknown'
-  const s = sysStatus.value.dashscope.status
-  if (s === 'ok') return 'status-ok'
-  if (s === 'not_configured') return 'status-not-configured'
-  return 'status-degraded'
-})
-
 const uptimeLabel = computed(() => {
-  if (!sysStatus.value) return '—'
+  if (!sysStatus.value) return '未获取'
   const sec = sysStatus.value.uptime_seconds
-  if (sec < 60) return `${Math.round(sec)}秒`
-  if (sec < 3600) return `${Math.round(sec / 60)}分钟`
-  return `${(sec / 3600).toFixed(1)}小时`
+  if (sec < 60) return `${Math.round(sec)} 秒`
+  if (sec < 3600) return `${Math.round(sec / 60)} 分钟`
+  return `${(sec / 3600).toFixed(1)} 小时`
 })
+
+const systemItems = computed<StatusItem[]>(() => {
+  const status = sysStatus.value
+  const missingBackendField = status
+    ? ({ status: 'not_reported' } satisfies HealthStatus)
+    : undefined
+  return [
+    toStatusItem('database', '数据库', status?.database, '业务数据读写'),
+    toStatusItem('redis', 'Redis', status?.redis, '缓存与任务队列'),
+    toStatusItem('ocr', 'OCR', status?.ocr ?? missingBackendField, '文档解析服务'),
+    toStatusItem(
+      'llm',
+      'LLM',
+      status?.llm ?? status?.dashscope ?? missingBackendField,
+      '问答与向量模型服务',
+    ),
+    {
+      key: 'uptime',
+      label: '运行时间',
+      status: status ? 'ok' : 'unknown',
+      detail: 'API 服务进程',
+      value: uptimeLabel.value,
+    },
+  ]
+})
+
+function toStatusItem(
+  key: string,
+  label: string,
+  source: HealthStatus | undefined,
+  detail: string,
+): StatusItem {
+  return {
+    key,
+    label,
+    status: source?.status ?? 'unknown',
+    detail,
+    latency: source?.latency_ms,
+  }
+}
+
+function statusClass(status: string) {
+  if (status === 'ok') return 'status-ok'
+  if (status === 'down') return 'status-down'
+  if (status === 'not_configured') return 'status-not-configured'
+  if (status === 'not_reported') return 'status-not-configured'
+  if (status === 'degraded') return 'status-degraded'
+  return 'status-unknown'
+}
+
+function statusText(status: string) {
+  if (status === 'ok') return '正常'
+  if (status === 'down') return '异常'
+  if (status === 'not_configured') return '未配置'
+  if (status === 'not_reported') return '未返回'
+  if (status === 'degraded') return '受限'
+  return '未知'
+}
 
 async function refreshAll() {
   loading.value = true
@@ -125,48 +203,61 @@ onMounted(refreshAll)
       </article>
     </section>
 
-    <section class="charts-row">
-      <article class="chart-card">
-        <h3>近 7 天趋势</h3>
-        <VChart :option="trendChartOption" autoresize style="height: 300px" />
+    <section class="dashboard-grid">
+      <article class="panel chart-panel">
+        <div class="panel-heading">
+          <h2>近 7 天趋势</h2>
+        </div>
+        <VChart :option="trendChartOption" autoresize class="trend-chart" />
       </article>
-      <article class="chart-card">
-        <h3>文档类型分布</h3>
-        <VChart :option="docTypeChartOption" autoresize style="height: 300px" />
+
+      <article class="panel status-panel">
+        <div class="panel-heading">
+          <h2>系统状态</h2>
+        </div>
+        <div class="status-list">
+          <div
+            v-for="item in systemItems"
+            :key="item.key"
+            class="status-row"
+            :class="statusClass(item.status)"
+          >
+            <span class="status-dot" />
+            <div class="status-copy">
+              <div class="status-title">
+                <span>{{ item.label }}</span>
+                <strong>{{ item.value || statusText(item.status) }}</strong>
+              </div>
+              <div class="status-detail">
+                <span>{{ item.detail }}</span>
+                <span v-if="item.latency !== undefined" class="status-latency">
+                  {{ item.latency }}ms
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
       </article>
     </section>
 
-    <section class="status-section">
-      <h2>系统状态</h2>
-      <div class="status-lights">
-        <div class="status-light" :class="dbStatusClass">
-          <span class="status-dot" />
-          <span>数据库</span>
-          <span v-if="sysStatus" class="status-latency">{{ sysStatus.database.latency_ms }}ms</span>
-        </div>
-        <div class="status-light" :class="redisStatusClass">
-          <span class="status-dot" />
-          <span>Redis</span>
-          <span v-if="sysStatus" class="status-latency">{{ sysStatus.redis.latency_ms }}ms</span>
-        </div>
-        <div class="status-light" :class="dashscopeStatusClass">
-          <span class="status-dot" />
-          <span>DashScope</span>
-        </div>
-        <div class="status-light status-ok">
-          <span class="status-dot" />
-          <span>运行时间: {{ uptimeLabel }}</span>
-        </div>
+    <section v-if="recentActivities.length" class="activity-section panel">
+      <div class="panel-heading">
+        <h2>近期操作</h2>
+        <span>知识库创建、删除与权限修改</span>
       </div>
-    </section>
-
-    <section v-if="stats?.recent_activities?.length" class="activity-section">
-      <h2>近期操作</h2>
-      <ElTable :data="stats.recent_activities" stripe size="small" style="width: 100%">
-        <ElTableColumn prop="action" label="操作" width="200" />
-        <ElTableColumn prop="target_type" label="对象" width="150" />
-        <ElTableColumn prop="ip_address" label="IP" width="140" />
-        <ElTableColumn prop="created_at" label="时间" />
+      <ElTable :data="recentActivities" stripe size="small" style="width: 100%">
+        <ElTableColumn label="操作人" min-width="180">
+          <template #default="{ row }">
+            <span class="actor-name">{{ row.actor_username }}</span>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn prop="knowledge_base_name" label="知识库" min-width="260" />
+        <ElTableColumn prop="action_label" label="操作" min-width="180" />
+        <ElTableColumn label="时间" width="180">
+          <template #default="{ row }">
+            {{ formatDateTime(row.created_at) }}
+          </template>
+        </ElTableColumn>
       </ElTable>
     </section>
   </main>
@@ -223,61 +314,97 @@ onMounted(refreshAll)
   color: #6b7280;
 }
 
-.charts-row {
+.dashboard-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
   gap: 16px;
   max-width: 1080px;
   margin: 0 auto 24px;
 }
 
-.chart-card {
+.panel {
   padding: 20px;
   background: #fff;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
 }
 
-.chart-card h3 {
-  margin: 0 0 12px;
+.panel-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.panel-heading h2 {
+  margin: 0;
   font-size: 15px;
   font-weight: 600;
   color: #111827;
 }
 
-.status-section {
-  max-width: 1080px;
-  margin: 0 auto 24px;
+.panel-heading span {
+  color: #6b7280;
+  font-size: 12px;
 }
 
-.status-section h2 {
-  font-size: 16px;
-  font-weight: 600;
-  margin: 0 0 12px;
+.trend-chart {
+  height: 320px;
 }
 
-.status-lights {
+.status-list {
+  display: grid;
+  gap: 10px;
+}
+
+.status-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-}
-
-.status-light {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 20px;
-  background: #fff;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  background: #f9fafb;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  font-size: 14px;
 }
 
 .status-dot {
   width: 10px;
   height: 10px;
+  margin-top: 5px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+
+.status-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.status-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+  color: #111827;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.status-title strong {
+  color: #374151;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-detail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #6b7280;
+  font-size: 12px;
 }
 
 .status-ok .status-dot {
@@ -311,10 +438,9 @@ onMounted(refreshAll)
   margin: 0 auto;
 }
 
-.activity-section h2 {
-  font-size: 16px;
+.actor-name {
+  color: #111827;
   font-weight: 600;
-  margin: 0 0 12px;
 }
 
 @media (width <= 768px) {
@@ -322,7 +448,7 @@ onMounted(refreshAll)
     padding: 20px;
   }
 
-  .charts-row {
+  .dashboard-grid {
     grid-template-columns: 1fr;
   }
 

@@ -25,11 +25,11 @@ export function updateKnowledgeBase(kbId: string, data: KnowledgeBaseUpdateReque
   return apiClient.put<KnowledgeBaseOut>(`/knowledge-bases/${kbId}`, data)
 }
 
-export function disableKnowledgeBase(kbId: string) {
+export function deleteKnowledgeBase(kbId: string) {
   return apiClient.delete<KnowledgeBaseOut>(`/knowledge-bases/${kbId}`)
 }
 
-export const deleteKnowledgeBase = disableKnowledgeBase
+export const disableKnowledgeBase = deleteKnowledgeBase
 
 export function listPermissions(kbId: string) {
   return apiClient.get<PermissionOut[]>(`/knowledge-bases/${kbId}/permissions`)

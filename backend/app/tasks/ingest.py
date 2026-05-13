@@ -12,6 +12,13 @@ from app.celery_app import celery_app
 from app.core.config import get_settings
 from app.db.session import AsyncSessionLocal
 from app.models.document import Document, DocumentIngestJob, DocumentParseResult
+from app.services.deletion import (
+    DOCUMENT_DELETING_STATUS,
+    INGEST_CANCEL_REQUESTED_STATUS,
+    collect_document_artifact_paths,
+    delete_artifact_files,
+    hard_delete_documents,
+)
 from app.services.ingest.asset_registry import register_assets
 from app.services.ingest.chunker import chunk_outline
 from app.services.ingest.dead_letter import mark_dead_letter
@@ -22,6 +29,10 @@ from app.services.ingest.track_b_indexer import write_page_index
 from app.services.ocr.client import DeepSeekOCRClient
 from app.services.ocr.exceptions import OCRTransient
 from app.tasks.async_runner import run_async_task
+
+
+class IngestCancelled(Exception):
+    pass
 
 
 @celery_app.task(
@@ -56,11 +67,15 @@ async def process_ingest_job(job_id: str, document_id: str, actor_user_id: str) 
             .with_for_update(skip_locked=True)
         )
         document = await db.get(Document, document_id)
-        if job is None or document is None:
+        if document is None:
+            return await _finish_cancelled_ingest(db, document_id=document_id, job_id=job_id)
+        if job is None:
             raise ValueError("入库任务或文档不存在")
         active_job = job
         active_document = document
+        ocr_session_id: str | None = None
         try:
+            await _raise_if_cancelled(db, job_id=active_job.id, document_id=active_document.id)
             active_job.status = "running"
             active_job.attempt += 1
             active_document.status = "ocr"
@@ -82,7 +97,10 @@ async def process_ingest_job(job_id: str, document_id: str, actor_user_id: str) 
                         document_id=active_document.id,
                     ),
                 )
+                await db.commit()
+                await _raise_if_cancelled(db, job_id=active_job.id, document_id=active_document.id)
                 session_id = str(upload_payload["ocr_session_id"])
+                ocr_session_id = session_id
 
                 ocr_payload = await run_idempotent_step(
                     db,
@@ -91,10 +109,15 @@ async def process_ingest_job(job_id: str, document_id: str, actor_user_id: str) 
                     input_payload={"ocr_session_id": session_id},
                     runner=lambda: _poll_and_fetch(ocr, session_id),
                 )
+                await db.commit()
+                await _raise_if_cancelled(db, job_id=active_job.id, document_id=active_document.id)
                 await ocr.delete_session(session_id)
+                ocr_session_id = None
 
             markdown = str(ocr_payload.get("markdown", ""))
-            active_document.status = "parsing"
+            active_document.status = "embedding"
+            await db.commit()
+            await _raise_if_cancelled(db, job_id=active_job.id, document_id=active_document.id)
             parsed_payload = await run_idempotent_step(
                 db,
                 job_id=active_job.id,
@@ -102,9 +125,10 @@ async def process_ingest_job(job_id: str, document_id: str, actor_user_id: str) 
                 input_payload={"markdown_sha256": _sha256(markdown)},
                 runner=lambda: _parse(markdown),
             )
+            await db.commit()
+            await _raise_if_cancelled(db, job_id=active_job.id, document_id=active_document.id)
             parsed = parse_outline(markdown)
             chunks = chunk_outline(parsed)
-            active_document.status = "indexing"
             await run_idempotent_step(
                 db,
                 job_id=active_job.id,
@@ -112,6 +136,8 @@ async def process_ingest_job(job_id: str, document_id: str, actor_user_id: str) 
                 input_payload=parsed_payload,
                 runner=lambda: _chunks_payload(chunks),
             )
+            await db.commit()
+            await _raise_if_cancelled(db, job_id=active_job.id, document_id=active_document.id)
 
             indexer = TrackAIndexer()
             vectors_payload = await run_idempotent_step(
@@ -121,12 +147,17 @@ async def process_ingest_job(job_id: str, document_id: str, actor_user_id: str) 
                 input_payload={"chunk_sha256": [chunk.sha256 for chunk in chunks]},
                 runner=lambda: _embed(indexer, chunks),
             )
+            await db.commit()
+            await _raise_if_cancelled(db, job_id=active_job.id, document_id=active_document.id)
             vectors = [
                 [float(value) for value in vector]
                 for vector in vectors_payload.get("vectors", [])
                 if isinstance(vector, list)
             ]
 
+            active_document.status = "vector_indexing"
+            await db.commit()
+            await _raise_if_cancelled(db, job_id=active_job.id, document_id=active_document.id)
             count_a = await indexer.write_chunks(
                 db,
                 knowledge_base_id=active_document.knowledge_base_id,
@@ -143,6 +174,8 @@ async def process_ingest_job(job_id: str, document_id: str, actor_user_id: str) 
                 input_payload={"document_id": active_document.id, "count": count_a},
                 runner=lambda: _static_payload({"count": count_a}),
             )
+            await db.commit()
+            await _raise_if_cancelled(db, job_id=active_job.id, document_id=active_document.id)
 
             count_b = await write_page_index(db, document_id=active_document.id, chunks=chunks)
             await run_idempotent_step(
@@ -152,6 +185,8 @@ async def process_ingest_job(job_id: str, document_id: str, actor_user_id: str) 
                 input_payload={"document_id": active_document.id, "count": count_b},
                 runner=lambda: _static_payload({"count": count_b}),
             )
+            await db.commit()
+            await _raise_if_cancelled(db, job_id=active_job.id, document_id=active_document.id)
 
             assets_count = await register_assets(
                 db,
@@ -166,6 +201,8 @@ async def process_ingest_job(job_id: str, document_id: str, actor_user_id: str) 
                 input_payload={"document_id": active_document.id, "count": assets_count},
                 runner=lambda: _static_payload({"count": assets_count}),
             )
+            await db.commit()
+            await _raise_if_cancelled(db, job_id=active_job.id, document_id=active_document.id)
 
             markdown_path = Path(settings.upload_dir) / "markdown" / f"{active_document.id}.md"
             markdown_path.parent.mkdir(parents=True, exist_ok=True)
@@ -184,6 +221,7 @@ async def process_ingest_job(job_id: str, document_id: str, actor_user_id: str) 
             active_document.status = "ready"
             active_job.status = "succeeded"
             active_job.last_error = None
+            await _raise_if_cancelled(db, job_id=active_job.id, document_id=active_document.id)
             await run_idempotent_step(
                 db,
                 job_id=active_job.id,
@@ -199,14 +237,54 @@ async def process_ingest_job(job_id: str, document_id: str, actor_user_id: str) 
                 "job_id": active_job.id,
                 "status": "ready",
             }
+        except IngestCancelled:
+            await db.rollback()
+            await _delete_ocr_session(ocr_session_id)
+            return await _finish_cancelled_ingest(db, document_id=document_id, job_id=job_id)
         except Exception as exc:
             await db.rollback()
+            if await _is_cancelled_or_deleted(db, job_id=job_id, document_id=document_id):
+                await _delete_ocr_session(ocr_session_id)
+                return await _finish_cancelled_ingest(db, document_id=document_id, job_id=job_id)
             job = await db.get(DocumentIngestJob, job_id)
             document = await db.get(Document, document_id)
             if job is not None and document is not None:
                 await mark_dead_letter(db, document=document, job=job, error=str(exc))
                 await db.commit()
             raise
+
+
+async def _raise_if_cancelled(db: Any, *, job_id: str, document_id: str) -> None:
+    if await _is_cancelled_or_deleted(db, job_id=job_id, document_id=document_id):
+        raise IngestCancelled
+
+
+async def _is_cancelled_or_deleted(db: Any, *, job_id: str, document_id: str) -> bool:
+    document = await db.scalar(select(Document).where(Document.id == document_id))
+    job = await db.scalar(select(DocumentIngestJob).where(DocumentIngestJob.id == job_id))
+    if document is None or job is None:
+        return True
+    return (
+        document.status == DOCUMENT_DELETING_STATUS or job.status == INGEST_CANCEL_REQUESTED_STATUS
+    )
+
+
+async def _finish_cancelled_ingest(db: Any, *, document_id: str, job_id: str) -> dict[str, Any]:
+    artifact_paths = await collect_document_artifact_paths(db, [document_id])
+    await hard_delete_documents(db, [document_id])
+    await db.commit()
+    delete_artifact_files(artifact_paths)
+    return {"document_id": document_id, "job_id": job_id, "status": "cancelled"}
+
+
+async def _delete_ocr_session(session_id: str | None) -> None:
+    if not session_id:
+        return
+    try:
+        async with DeepSeekOCRClient() as ocr:
+            await ocr.delete_session(session_id)
+    except Exception:
+        return
 
 
 async def _upload_to_ocr(

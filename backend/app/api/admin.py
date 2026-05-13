@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import _record_audit
 from app.api.deps import require_admin
+from app.core.timezone import isoformat_beijing
 from app.db.session import get_db_session
 from app.models.auth import AuditLog, User
 from app.schemas.admin import (
@@ -41,9 +42,9 @@ def _admin_user_out(user: User) -> AdminUserOut:
         is_active=user.is_active,
         require_password_change=user.require_password_change,
         avatar_url=_avatar_url(user.avatar_path),
-        last_login_at=user.last_login_at.isoformat() if user.last_login_at else None,
-        created_at=user.created_at.isoformat(),
-        updated_at=user.updated_at.isoformat(),
+        last_login_at=isoformat_beijing(user.last_login_at) if user.last_login_at else None,
+        created_at=isoformat_beijing(user.created_at),
+        updated_at=isoformat_beijing(user.updated_at),
     )
 
 
@@ -56,7 +57,7 @@ def _audit_log_out(log: AuditLog) -> AuditLogOut:
         target_id=log.target_id,
         ip_address=log.ip_address,
         details=log.details or {},
-        created_at=log.created_at.isoformat(),
+        created_at=isoformat_beijing(log.created_at),
     )
 
 

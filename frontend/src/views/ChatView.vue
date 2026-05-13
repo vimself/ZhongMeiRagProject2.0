@@ -25,6 +25,7 @@ import CitationPane from '@/features/chat/CitationPane.vue'
 import Composer from '@/features/chat/Composer.vue'
 import MessageList from '@/features/chat/MessageList.vue'
 import { useChatStore } from '@/stores/chat'
+import { formatBeijingDate } from '@/utils/time'
 
 const router = useRouter()
 const route = useRoute()
@@ -221,7 +222,7 @@ onMounted(async () => {
               <div class="chat-sidebar__item-body">
                 <div class="chat-sidebar__item-title" :title="s.title">{{ s.title }}</div>
                 <div class="chat-sidebar__item-meta">
-                  {{ s.message_count }} 条 · {{ new Date(s.updated_at).toLocaleDateString() }}
+                  {{ s.message_count }} 条 · {{ formatBeijingDate(s.updated_at) }}
                 </div>
               </div>
             </button>

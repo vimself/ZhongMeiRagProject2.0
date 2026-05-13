@@ -22,6 +22,7 @@ from app.models.document import (
 )
 from app.models.knowledge_base import KnowledgeBase
 from app.security.password import hash_password
+from app.services.deletion import hard_delete_documents
 from app.services.ingest.dead_letter import mark_dead_letter
 from app.services.ingest.idempotency import run_idempotent_step
 from app.services.ocr.exceptions import OCRFailed
@@ -228,6 +229,44 @@ async def test_process_failure_marks_dead(monkeypatch: pytest.MonkeyPatch, tmp_p
         doc = await session.get(Document, "doc-id")
     assert job is not None and job.status == "dead"
     assert doc is not None and doc.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_process_cancel_requested_hard_deletes_document(tmp_path: Path) -> None:
+    await _seed(tmp_path)
+    async with AsyncSessionLocal() as session:
+        doc = await session.get(Document, "doc-id")
+        job = await session.get(DocumentIngestJob, "job-id")
+        assert doc is not None and job is not None
+        doc.status = "deleting"
+        job.status = "cancel_requested"
+        await session.commit()
+
+    result = await process_ingest_job("job-id", "doc-id", "user-id")
+    assert result["status"] == "cancelled"
+
+    async with AsyncSessionLocal() as session:
+        doc_count = len(list(await session.scalars(select(Document))))
+        job_count = len(list(await session.scalars(select(DocumentIngestJob))))
+        audit_count = len(
+            list(
+                await session.scalars(
+                    select(AuditLog).where(AuditLog.action == "ingest.step_failed")
+                )
+            )
+        )
+    assert (doc_count, job_count, audit_count) == (0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_process_stale_deleted_document_returns_cancelled(tmp_path: Path) -> None:
+    await _seed(tmp_path)
+    async with AsyncSessionLocal() as session:
+        await hard_delete_documents(session, ["doc-id"])
+        await session.commit()
+
+    result = await process_ingest_job("job-id", "doc-id", "user-id")
+    assert result["status"] == "cancelled"
 
 
 @pytest.mark.asyncio

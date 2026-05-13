@@ -29,6 +29,7 @@ import type { UserProfileDetail } from '@/api/types'
 import { deleteAvatar, getProfile, updateProfile, uploadAvatar } from '@/api/user'
 import ChangePasswordDialog from '@/components/ChangePasswordDialog.vue'
 import { useAuthStore } from '@/stores/auth'
+import { formatBeijingFullDateTime } from '@/utils/time'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -128,16 +129,7 @@ async function handleDeleteAvatar() {
   }
 }
 
-function formatDate(iso: string | null): string {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
+const formatDate = formatBeijingFullDateTime
 
 onMounted(loadProfile)
 </script>

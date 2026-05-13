@@ -120,5 +120,7 @@ class DashboardStats(BaseModel):
 class SystemStatus(BaseModel):
     database: dict[str, Any]
     redis: dict[str, Any]
+    ocr: dict[str, Any]
+    llm: dict[str, Any]
     dashscope: dict[str, Any]
     uptime_seconds: float

@@ -31,10 +31,42 @@ class DocumentListResponse(BaseModel):
     page_size: int
 
 
-class DocumentUploadResponse(BaseModel):
+class DocumentDeleteResponse(BaseModel):
+    document_id: str
+    deleted: bool = True
+
+
+class DocumentBatchDeleteRequest(BaseModel):
+    document_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class DocumentBatchDeleteResponse(BaseModel):
+    deleted_ids: list[str]
+    deleted_count: int
+
+
+class DocumentUploadItem(BaseModel):
     document_id: str
     job_id: str
     trace_id: str
+    title: str
+    filename: str
+
+
+class DocumentUploadRejectedItem(BaseModel):
+    filename: str
+    reason: str
+
+
+class DocumentUploadResponse(BaseModel):
+    document_id: str | None = None
+    job_id: str | None = None
+    trace_id: str | None = None
+    documents: list[DocumentUploadItem] = Field(default_factory=list)
+    rejected: list[DocumentUploadRejectedItem] = Field(default_factory=list)
+    accepted_count: int = 0
+    rejected_count: int = 0
+    max_count: int = 50
 
 
 class AssetOut(BaseModel):

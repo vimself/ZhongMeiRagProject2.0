@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.timezone import beijing_now
 from app.db.base import Base
-
-
-def utcnow() -> datetime:
-    return datetime.now(UTC)
 
 
 def new_uuid() -> str:
@@ -30,9 +27,9 @@ class User(Base):
     require_password_change: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     avatar_path: Mapped[str | None] = mapped_column(String(512))
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=beijing_now)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+        DateTime(timezone=True), default=beijing_now, onupdate=beijing_now
     )
 
     login_records: Mapped[list[LoginRecord]] = relationship(
@@ -54,7 +51,7 @@ class LoginRecord(Base):
     user_agent: Mapped[str] = mapped_column(String(512), nullable=False, default="")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=beijing_now)
 
     user: Mapped[User] = relationship(back_populates="login_records")
 
@@ -69,7 +66,7 @@ class AuthLoginAttempt(Base):
     ip_address: Mapped[str] = mapped_column(String(64), nullable=False)
     success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     reason: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=beijing_now)
 
     __table_args__ = (
         Index("ix_auth_login_attempts_subject_ip_created", "subject", "ip_address", "created_at"),
@@ -89,7 +86,7 @@ class AuditLog(Base):
     ip_address: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     user_agent: Mapped[str] = mapped_column(String(512), nullable=False, default="")
     details: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=beijing_now)
 
     __table_args__ = (
         Index("ix_audit_logs_actor_created", "actor_user_id", "created_at"),

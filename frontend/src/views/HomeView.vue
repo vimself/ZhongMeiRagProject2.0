@@ -72,7 +72,7 @@ async function logout() {
             :icon="Collection"
             @click="router.push('/admin/knowledge-bases')"
           >
-            知识库治理
+            知识库管理
           </ElButton>
           <ElButton :icon="Key" @click="passwordDialogVisible = true">改密</ElButton>
           <ElButton :icon="SwitchButton" @click="logout">登出</ElButton>

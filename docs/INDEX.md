@@ -16,3 +16,6 @@
 | [kb-lifecycle-permission-fix-2026-05-12.md](kb-lifecycle-permission-fix-2026-05-12.md) | 2026-05-12 · 知识库生命周期与权限语义修正         |
 | [knowledge-list-toolbar-ux-2026-05-12.md](knowledge-list-toolbar-ux-2026-05-12.md)     | 2026-05-12 · /knowledge 工具栏视觉修正            |
 | [knowledge-document-pdf-preview-2026-05-12.md](knowledge-document-pdf-preview-2026-05-12.md) | 2026-05-12 · 知识库详情 PDF 预览跳转修正    |
+| [beijing-timezone-normalization-2026-05-13.md](beijing-timezone-normalization-2026-05-13.md) | 2026-05-13 · 北京时间记录统一修复 |
+| [batch-document-upload-2026-05-13.md](batch-document-upload-2026-05-13.md) | 2026-05-13 · 知识库 PDF 批量上传改造 |
+| [hard-delete-lifecycle-2026-05-13.md](hard-delete-lifecycle-2026-05-13.md) | 2026-05-13 · 知识库与文档物理删除改造 |
