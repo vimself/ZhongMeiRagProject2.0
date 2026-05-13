@@ -19,11 +19,11 @@ import { useRoute, useRouter } from 'vue-router'
 
 import type { ChatCitation } from '@/api/chat'
 import { listKnowledgeBases } from '@/api/knowledge'
-import { pdfPreviewUrl, signPdfToken } from '@/api/pdfPreview'
 import type { KnowledgeBaseOut } from '@/api/types'
 import CitationPane from '@/features/chat/CitationPane.vue'
 import Composer from '@/features/chat/Composer.vue'
 import MessageList from '@/features/chat/MessageList.vue'
+import PreviewModal from '@/features/chat/PreviewModal.vue'
 import { useChatStore } from '@/stores/chat'
 import { formatBeijingDate } from '@/utils/time'
 
@@ -34,6 +34,8 @@ const chat = useChatStore()
 const kbList = ref<KnowledgeBaseOut[]>([])
 const loadingKb = ref(false)
 const scrollerRef = ref<HTMLDivElement>()
+const previewVisible = ref(false)
+const activeCitation = ref<ChatCitation | null>(null)
 
 const activeKbName = computed(() => {
   if (!chat.activeKbId) return ''
@@ -116,28 +118,9 @@ async function handleSubmit(question: string) {
   await chat.fetchSessions()
 }
 
-function withPdfPageHash(url: string, page?: number | null): string {
-  if (!page || page < 1) return url
-  return `${url}#page=${page}`
-}
-
 async function openCitation(citation: ChatCitation) {
-  const previewWindow = window.open('about:blank', '_blank')
-  if (previewWindow) {
-    previewWindow.opener = null
-  }
-  try {
-    const { data } = await signPdfToken(citation.document_id)
-    const url = withPdfPageHash(pdfPreviewUrl(data.document_id, data.token), citation.page_start)
-    if (previewWindow) {
-      previewWindow.location.href = url
-    } else {
-      window.open(url, '_blank')
-    }
-  } catch (err) {
-    previewWindow?.close()
-    ElMessage.error('PDF 预览链接签发失败：' + (err as Error).message)
-  }
+  activeCitation.value = citation
+  previewVisible.value = true
 }
 
 watch(
@@ -282,6 +265,8 @@ onMounted(async () => {
       :loading="false"
       @open="openCitation"
     />
+
+    <PreviewModal v-model="previewVisible" :citation="activeCitation" />
   </div>
 </template>
 

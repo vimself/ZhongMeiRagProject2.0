@@ -269,6 +269,101 @@ def test_build_reference_payload_contains_urls() -> None:
     assert "/api/v2/documents/d-42/download" in payload["download_url"]
 
 
+def test_build_prompt_uses_full_section_text_not_snippet() -> None:
+    state = rag_graph.RagState(kb_id="kb", raw_query="问题", user_id="u", k=1)
+    state.citations = [
+        CitationMeta(
+            index=1,
+            chunk_id="c",
+            document_id="d",
+            document_title="文档",
+            knowledge_base_id="kb",
+            section_path=["总则", "安全"],
+            section_text="完整证据块，包含比 snippet 更多的约束条件与数值要求。",
+            page_start=3,
+            page_end=3,
+            bbox=None,
+            snippet="截断摘要",
+            score=0.9,
+        )
+    ]
+    prompt = rag_graph.build_prompt(state)
+    assert "完整证据块" in prompt[1]["content"]
+    assert "截断摘要" not in prompt[1]["content"]
+
+
+def test_build_prompt_includes_recent_history() -> None:
+    state = rag_graph.RagState(
+        kb_id="kb",
+        raw_query="那人员配置要求呢",
+        user_id="u",
+        history=[
+            {"role": "user", "content": "先看施工组织总则"},
+            {"role": "assistant", "content": "总则里提到了安全责任制。"},
+        ],
+        k=1,
+    )
+    state.citations = [
+        CitationMeta(
+            index=1,
+            chunk_id="c",
+            document_id="d",
+            document_title="文档",
+            knowledge_base_id="kb",
+            section_path=["总则", "进度"],
+            section_text="施工方案应包含进度计划与人员配置。",
+            page_start=5,
+            page_end=5,
+            bbox=None,
+            snippet="人员配置",
+            score=0.8,
+        )
+    ]
+    prompt = rag_graph.build_prompt(state)
+    assert "## 最近对话" in prompt[1]["content"]
+    assert "用户: 先看施工组织总则" in prompt[1]["content"]
+    assert "助手: 总则里提到了安全责任制。" in prompt[1]["content"]
+
+
+def test_contextualize_query_uses_recent_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_messages: list[dict[str, Any]] = []
+
+    class FakeDashScopeClient:
+        async def __aenter__(self) -> FakeDashScopeClient:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def complete_chat(
+            self,
+            messages: list[dict[str, Any]],
+            *,
+            model: str | None = None,
+            enable_thinking: bool | None = None,
+        ) -> str:
+            captured_messages.extend(messages)
+            assert model is None
+            assert enable_thinking is False
+            return "施工组织设计中关于人员配置的要求"
+
+    monkeypatch.setattr(rag_graph, "DashScopeClient", FakeDashScopeClient)
+    state = rag_graph.RagState(
+        kb_id="kb",
+        raw_query="那人员配置要求呢",
+        user_id="u",
+        history=[
+            {"role": "user", "content": "先看施工组织总则"},
+            {"role": "assistant", "content": "总则里提到了安全责任制。"},
+        ],
+    )
+    rag_graph.plan_query(state)
+    asyncio.run(rag_graph.contextualize_query(state))
+    assert state.planned_query == "施工组织设计中关于人员配置的要求"
+    assert any("最近对话" in message["content"] for message in captured_messages)
+    assert any("那人员配置要求呢" in message["content"] for message in captured_messages)
+
+
 def test_prepare_citations_sqlite_fallback_hits_chunks() -> None:
     async def _run() -> None:
         await _seed()

@@ -51,9 +51,9 @@ origin=https://github.com/vimself/ZhongMeiRagProject2.0.git
 
 - **入库链路**：Celery `ingest` 队列，流程为 OCR→章节解析→切片→embedding→Track A/B→资产登记→finalize
 - **入库前端状态**：正常流转统一展示为排队、OCR、Embedding、向量入库、完成；失败仅作为异常状态显示
-- **RAG 检索**：Track A 向量召回 + Track B BM25/稀疏召回 + RRF 融合（K=60）
-- **RAG Graph**：plan_query→retrieve→rrf_fusion→dedupe→should_answer→generate_stream→rewrite→persist
-- **LLM**：DashScope qwen3-vl-embedding（embedding）、qwen3.6-plus（聊天），429 降级 qwen3-turbo
+- **RAG 检索**：Track A 向量召回 + Track B BM25/稀疏召回 + RRF 融合（K=60）+ `qwen3-rerank`
+- **RAG Graph**：plan_query→contextualize_query→retrieve_track_a/b→rrf_fusion→rerank→dedupe→should_answer→generate_stream→rewrite→persist
+- **LLM**：DashScope qwen3-vl-embedding（embedding）、qwen3.6-plus（聊天/历史感知 query rewrite）、`qwen3-rerank`（重排序），429 降级 qwen3-turbo
 - **搜索服务**：复用 Retriever，跨 KB 串行聚合
 - **导出**：Celery 异步任务，生成 JSON/CSV + metadata ZIP
 
@@ -83,6 +83,9 @@ CHAT_HISTORY_LIMIT
 CHAT_MIN_SCORE_THRESHOLD
 CHAT_TOPK
 CHAT_NO_HIT_MESSAGE
+DASHSCOPE_RERANK_MODEL
+RAG_RERANK_ENABLED
+RAG_RERANK_MAX_CANDIDATES
 EXPORT_DIR
 UPLOAD_MAX_FILES
 ```

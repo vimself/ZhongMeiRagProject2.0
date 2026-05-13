@@ -70,3 +70,83 @@ async def test_multimodal_embedding_400_preserves_response_body_without_retry() 
     assert calls == 1
     assert "HTTP 400" in str(exc_info.value)
     assert "batch size is invalid" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_rerank_documents_uses_compatible_api_and_parses_scores(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(
+        settings,
+        "dashscope_base_url",
+        "https://dashscope.test/compatible-mode/v1",
+    )
+    captured_path: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured_path.append(request.url.path)
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "results": [
+                    {"index": 1, "relevance_score": 0.91},
+                    {"index": 0, "relevance_score": 0.73},
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DashScopeClient(client=http, rate_limiter=FakeRateLimiter())
+        rankings = await client.rerank_documents(
+            "施工安全要求",
+            ["第一段", "第二段"],
+            model="qwen3-rerank",
+            top_n=2,
+        )
+
+    assert captured_path == ["/compatible-api/v1/reranks"]
+    assert rankings == [(1, 0.91), (0, 0.73)]
+
+
+@pytest.mark.asyncio
+async def test_complete_chat_uses_non_stream_mode_and_returns_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(
+        settings,
+        "dashscope_base_url",
+        "https://dashscope.test/compatible-mode/v1",
+    )
+    captured_body: dict[str, Any] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured_body.update(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "改写后的独立检索问题",
+                        }
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url=settings.dashscope_base_url,
+    ) as http:
+        client = DashScopeClient(client=http, rate_limiter=FakeRateLimiter())
+        content = await client.complete_chat(
+            [{"role": "user", "content": "那这个标准适用于哪里？"}],
+            enable_thinking=False,
+        )
+
+    assert captured_body["stream"] is False
+    assert captured_body["enable_thinking"] is False
+    assert content == "改写后的独立检索问题"

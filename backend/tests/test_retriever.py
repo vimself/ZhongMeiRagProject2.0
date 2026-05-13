@@ -244,3 +244,23 @@ def test_retriever_requires_admin() -> None:
 def test_rrf_single_track_keeps_raw_scores() -> None:
     fused = Retriever._rrf_fuse([("chunk-a", 0.8), ("chunk-b", 0.7)], [], k=10)
     assert fused == [("chunk-a", 0.8), ("chunk-b", 0.7)]
+
+
+def test_retriever_applies_rerank_hook(monkeypatch: pytest.MonkeyPatch) -> None:
+    _seed()
+
+    async def _run() -> None:
+        async with AsyncSessionLocal() as session:
+            retriever = Retriever(session)
+
+            async def fake_rerank(query: str, results: list[object], *, top_n: int | None = None):
+                assert "施工" in query
+                ordered = list(reversed(results))
+                return ordered[:top_n] if top_n is not None else ordered
+
+            monkeypatch.setattr("app.services.rag.retriever.rerank_results", fake_rerank)
+            items = await retriever.retrieve(kb_id="kb-id", query="施工 混凝土", k=2)
+            assert len(items) == 2
+            assert items[0].chunk_id == "chunk-b"
+
+    asyncio.run(_run())

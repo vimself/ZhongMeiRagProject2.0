@@ -122,6 +122,35 @@ def _message_out(message: ChatMessage, user_id: str) -> ChatMessageOut:
     )
 
 
+async def _load_recent_history(
+    db: DbSession,
+    *,
+    session_id: str,
+    limit: int,
+) -> list[dict[str, str]]:
+    if limit <= 0:
+        return []
+    stmt = (
+        select(ChatMessage)
+        .where(ChatMessage.session_id == session_id)
+        .order_by(
+            ChatMessage.created_at.desc(),
+            case((ChatMessage.role == "assistant", 0), (ChatMessage.role == "user", 1), else_=2),
+            ChatMessage.id.desc(),
+        )
+        .limit(limit)
+    )
+    messages = list((await db.execute(stmt)).scalars().all())
+    messages.reverse()
+    history: list[dict[str, str]] = []
+    for message in messages:
+        content = (message.content or "").strip()
+        if message.role not in {"user", "assistant"} or not content:
+            continue
+        history.append({"role": message.role, "content": content})
+    return history
+
+
 @router.get("/sessions", response_model=ChatSessionListResponse)
 async def list_sessions(
     user: CurrentUser,
@@ -240,6 +269,15 @@ async def chat_stream(
 
     question = body.question
     settings = get_settings()
+    history = (
+        await _load_recent_history(
+            db,
+            session_id=session.id,
+            limit=settings.chat_history_limit,
+        )
+        if body.session_id
+        else []
+    )
 
     async def event_gen() -> AsyncIterator[dict[str, Any]]:
         yield {
@@ -255,6 +293,7 @@ async def chat_stream(
             user_id=user.id,
             query=body.question,
             filters=body.filters,
+            history=history,
             k=body.k,
             query_vector=await _query_embedding(body.question),
         )

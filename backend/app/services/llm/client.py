@@ -159,6 +159,48 @@ class DashScopeClient:
         model = self.settings.dashscope_embedding_model.lower()
         return "vl-embedding" in model or model.startswith("multimodal-embedding")
 
+    async def complete_chat(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        model: str | None = None,
+        enable_thinking: bool | None = None,
+    ) -> str:
+        chosen = model or self.settings.dashscope_chat_model
+        await self._rate_limiter.acquire(chosen, tokens=1)
+        response = await self._client.post(
+            "/chat/completions",
+            json={
+                "model": chosen,
+                "messages": messages,
+                "stream": False,
+                "enable_thinking": (
+                    self.settings.dashscope_chat_enable_thinking
+                    if enable_thinking is None
+                    else enable_thinking
+                ),
+            },
+        )
+        self._raise_for_status(response, operation="chat", model=chosen)
+        payload = response.json()
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ValueError("DashScope chat 响应缺少 choices")
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = [
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+            ]
+            merged = "".join(parts).strip()
+            if merged:
+                return merged
+        raise ValueError("DashScope chat 响应格式不正确")
+
     async def stream_chat(
         self,
         messages: list[dict[str, Any]],
@@ -202,6 +244,55 @@ class DashScopeClient:
             if exc.response.status_code == 429:
                 raise DashScopeRateLimitError(str(exc)) from exc
             raise
+
+    async def rerank_documents(
+        self,
+        query: str,
+        documents: Sequence[str],
+        *,
+        model: str | None = None,
+        top_n: int | None = None,
+        instruct: str | None = None,
+    ) -> list[tuple[int, float]]:
+        chosen = model or self.settings.dashscope_rerank_model
+        await self._rate_limiter.acquire(chosen, tokens=1)
+        body: dict[str, Any] = {
+            "model": chosen,
+            "query": query,
+            "documents": list(documents),
+        }
+        if top_n is not None:
+            body["top_n"] = top_n
+        if instruct:
+            body["instruct"] = instruct
+        response = await self._client.post(
+            self._compatible_api_url("/reranks"),
+            json=body,
+        )
+        self._raise_for_status(response, operation="rerank", model=chosen)
+        payload = response.json()
+        rows = payload.get("results")
+        if not isinstance(rows, list):
+            rows = payload.get("output", {}).get("results") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("DashScope rerank 响应缺少 results")
+        rankings: list[tuple[int, float]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            index = row.get("index")
+            score = row.get("relevance_score")
+            if isinstance(index, int) and isinstance(score, int | float):
+                rankings.append((index, float(score)))
+        return rankings
+
+    def _compatible_api_url(self, path: str) -> str:
+        base = self.settings.dashscope_base_url.rstrip("/")
+        compatible_api = base.replace("/compatible-mode/", "/compatible-api/").replace(
+            "compatible-mode",
+            "compatible-api",
+        )
+        return compatible_api + path
 
 
 def _extract_stream_deltas(payload: str) -> list[ChatStreamDelta]:

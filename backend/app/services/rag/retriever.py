@@ -7,8 +7,10 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models.document import Document, KnowledgeChunkV2
 from app.services.deletion import DOCUMENT_DELETING_STATUS
+from app.services.rag.reranker import rerank_results
 from app.services.rag.vector_utils import (
     clean_display_text,
     dense_vector_literal,
@@ -48,6 +50,7 @@ class Retriever:
         query_vector: list[float] | None = None,
     ) -> list[RetrievalResult]:
         filters = filters or {}
+        settings = get_settings()
         cleaned_query = clean_display_text(query)
         loaded_chunks: list[KnowledgeChunkV2] | None = None
         chunks: list[KnowledgeChunkV2]
@@ -112,7 +115,11 @@ class Retriever:
         if not chunks:
             return []
         # RRF fusion
-        fused = self._rrf_fuse(vector_results, bm25_results, k=k)
+        fused = self._rrf_fuse(
+            vector_results,
+            bm25_results,
+            k=max(k * 2, settings.rag_rerank_max_candidates),
+        )
         # Load document titles
         doc_ids = {chunk.document_id for chunk in chunks}
         doc_titles = await self._load_doc_titles(doc_ids)
@@ -142,7 +149,7 @@ class Retriever:
                     score=score,
                 )
             )
-        return results
+        return await rerank_results(cleaned_query or query, results, top_n=k)
 
     async def _load_chunks(self, kb_id: str, filters: dict[str, Any]) -> list[KnowledgeChunkV2]:
         query = (

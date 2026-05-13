@@ -22,9 +22,15 @@ from app.core.config import get_settings
 from app.models.chat import ChatMessage, ChatMessageCitation, ChatSession
 from app.services.llm.client import ChatStreamDelta, DashScopeClient, DashScopeRateLimitError
 from app.services.rag.citations import CitationMeta, build_reference_payload
+from app.services.rag.reranker import rerank_results
 from app.services.rag.retriever import RetrievalResult, Retriever
+from app.services.rag.vector_utils import clean_display_text
 
 CITE_PATTERN = re.compile(r"\[cite:(\d+)\]")
+HISTORY_REWRITE_MAX_MESSAGES = 6
+HISTORY_REWRITE_MAX_CHARS = 400
+GENERATION_HISTORY_MAX_MESSAGES = 6
+GENERATION_HISTORY_MAX_CHARS = 240
 
 
 @dataclass
@@ -35,6 +41,7 @@ class RagState:
     raw_query: str
     user_id: str
     filters: dict[str, Any] = field(default_factory=dict)
+    history: list[dict[str, str]] = field(default_factory=list)
     k: int = 6
     planned_query: str = ""
     track_a: list[tuple[str, float]] = field(default_factory=list)  # (chunk_id, score)
@@ -60,6 +67,67 @@ def plan_query(state: RagState) -> RagState:
     """
     cleaned = (state.raw_query or "").strip()
     state.planned_query = cleaned
+    return state
+
+
+def _format_history_messages(
+    history: list[dict[str, str]],
+    *,
+    limit: int,
+    max_chars: int,
+) -> str:
+    rows: list[str] = []
+    for item in history[-limit:]:
+        role = str(item.get("role", "")).strip().lower()
+        content = clean_display_text(str(item.get("content", "")))
+        if not content:
+            continue
+        if len(content) > max_chars:
+            content = content[:max_chars].rstrip() + "..."
+        if role == "user":
+            rows.append(f"用户: {content}")
+        elif role == "assistant":
+            rows.append(f"助手: {content}")
+    return "\n".join(rows)
+
+
+async def contextualize_query(state: RagState) -> RagState:
+    if not state.history or not state.planned_query:
+        return state
+    history_block = _format_history_messages(
+        state.history,
+        limit=HISTORY_REWRITE_MAX_MESSAGES,
+        max_chars=HISTORY_REWRITE_MAX_CHARS,
+    )
+    if not history_block:
+        return state
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是 RAG 检索查询改写器。请结合最近对话，把最后一个用户问题改写为可直接"
+                "检索的独立问题。必须保留人名、文档名、设备名、标准号、章节号、时间、数字、"
+                "单位和否定约束。若原问题已经完整独立，则原样返回。只输出一行改写后的问题，"
+                "不要解释。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"## 最近对话\n{history_block}\n\n"
+                f"## 最后一个用户问题\n{state.planned_query}\n\n"
+                "请输出独立检索问题。"
+            ),
+        },
+    ]
+    try:
+        async with DashScopeClient() as client:
+            rewritten = await client.complete_chat(messages, enable_thinking=False)
+    except Exception:
+        return state
+    rewritten = clean_display_text(rewritten)
+    if rewritten:
+        state.planned_query = rewritten[:4000]
     return state
 
 
@@ -186,6 +254,16 @@ async def materialize_candidates(state: RagState, retriever: Retriever) -> RagSt
     return state
 
 
+async def rerank_candidates(state: RagState) -> RagState:
+    settings = get_settings()
+    state.candidates = await rerank_results(
+        state.planned_query or state.raw_query,
+        state.candidates,
+        top_n=max(state.k * 2, settings.rag_rerank_max_candidates),
+    )
+    return state
+
+
 # ---------- Node: dedupe_citations ----------
 
 
@@ -261,11 +339,20 @@ def build_prompt(state: RagState) -> list[dict[str, Any]]:
     context_lines: list[str] = []
     for meta in state.citations:
         section = " > ".join(meta.section_path) if meta.section_path else "(无章节)"
+        context_text = clean_display_text(meta.section_text or meta.snippet)
+        if not context_text:
+            context_text = meta.snippet
         context_lines.append(
             f"[cite:{meta.index}] 文档《{meta.document_title or meta.document_id}》"
-            f" | 章节: {section} | 页: {meta.page_start or '?'}\n{meta.snippet}"
+            f" | 章节: {section} | 页: {meta.page_start or '?'}\n{context_text}"
         )
     context_block = "\n\n".join(context_lines) if context_lines else "(无检索结果)"
+    history_block = _format_history_messages(
+        state.history,
+        limit=GENERATION_HISTORY_MAX_MESSAGES,
+        max_chars=GENERATION_HISTORY_MAX_CHARS,
+    )
+    history_section = f"## 最近对话\n{history_block}\n\n" if history_block else ""
     system_prompt = (
         "You are a careful engineering document assistant. Answer in concise Chinese. "
         "Use only the retrieved context; do not invent facts. "
@@ -280,6 +367,7 @@ def build_prompt(state: RagState) -> list[dict[str, Any]]:
     )
     user_prompt = (
         f"## 检索上下文\n{context_block}\n\n"
+        f"{history_section}"
         f"## 用户问题\n{state.raw_query}\n\n"
         "请基于上下文作答。先直接回答结论，再补充必要的要点或表格。"
         "不要把检索上下文原样复制给用户，不要输出引用编号或参考文档清单。"
@@ -419,6 +507,7 @@ async def prepare_citations(
     user_id: str,
     query: str,
     filters: dict[str, Any] | None = None,
+    history: list[dict[str, str]] | None = None,
     k: int | None = None,
     query_vector: list[float] | None = None,
 ) -> RagState:
@@ -429,14 +518,17 @@ async def prepare_citations(
         raw_query=query,
         user_id=user_id,
         filters=filters or {},
+        history=history or [],
         k=k or settings.chat_topk,
     )
     plan_query(state)
+    await contextualize_query(state)
     retriever = Retriever(db)
     await retrieve_track_a(state, retriever, query_vector=query_vector)
     await retrieve_track_b(state, retriever)
     rrf_fusion(state)
     await materialize_candidates(state, retriever)
+    await rerank_candidates(state)
     dedupe_citations(state)
     should_answer(state, min_score=settings.chat_min_score_threshold)
     return state

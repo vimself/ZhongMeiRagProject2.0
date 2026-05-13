@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     dashscope_chat_enable_thinking: bool = False
     dashscope_embedding_model: str = "qwen3-vl-embedding"
     dashscope_embedding_dimension: int = 1024
+    dashscope_rerank_model: str = "qwen3-rerank"
     ocr_base_url: str = "http://222.195.4.65:8899"
     ocr_workstation_host: str = "222.195.4.65"
     ocr_callback_base_url: str = "http://127.0.0.1:18000"
@@ -54,6 +55,8 @@ class Settings(BaseSettings):
     chat_min_score_threshold: float = 0.05
     chat_topk: int = 6
     chat_no_hit_message: str = "无法在知识库中找到依据，建议换个问法或先上传相关文档。"
+    rag_rerank_enabled: bool = True
+    rag_rerank_max_candidates: int = 12
     export_dir: str = "uploads/exports"
 
 

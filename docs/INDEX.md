@@ -19,3 +19,4 @@
 | [beijing-timezone-normalization-2026-05-13.md](beijing-timezone-normalization-2026-05-13.md) | 2026-05-13 · 北京时间记录统一修复 |
 | [batch-document-upload-2026-05-13.md](batch-document-upload-2026-05-13.md) | 2026-05-13 · 知识库 PDF 批量上传改造 |
 | [hard-delete-lifecycle-2026-05-13.md](hard-delete-lifecycle-2026-05-13.md) | 2026-05-13 · 知识库与文档物理删除改造 |
+| [rag-accuracy-audit-2026-05-13.md](rag-accuracy-audit-2026-05-13.md) | 2026-05-13 · 上传到 RAG 问答全链路准确度专项审查 |
