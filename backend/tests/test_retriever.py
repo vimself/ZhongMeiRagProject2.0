@@ -13,6 +13,7 @@ from app.models.document import Document, KnowledgeChunkV2
 from app.models.knowledge_base import KnowledgeBase
 from app.security.login_limiter import login_failure_limiter
 from app.security.password import hash_password
+from app.services.rag.retriever import Retriever
 
 
 @pytest.fixture(autouse=True)
@@ -238,3 +239,8 @@ def test_retriever_requires_admin() -> None:
         json={"kb_id": "kb-id", "query": "施工"},
     )
     assert resp.status_code == 403
+
+
+def test_rrf_single_track_keeps_raw_scores() -> None:
+    fused = Retriever._rrf_fuse([("chunk-a", 0.8), ("chunk-b", 0.7)], [], k=10)
+    assert fused == [("chunk-a", 0.8), ("chunk-b", 0.7)]

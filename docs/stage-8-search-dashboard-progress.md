@@ -39,7 +39,9 @@
 
 - 新增搜索页 `/search`：筛选栏（query、KB、排序）、热词快捷筛选、结果卡片、分页、空状态、加载态、导出 ZIP 按钮与异步进度。点击结果复用 `PreviewModal`（Stage 6/7）进行 PDF 预览 + bbox 高亮。由于当前上传入口未让用户选择文档类型，搜索页暂不展示文档类型筛选，避免把默认 `other` 误解为系统自动分类结果。
 - 新增管理员仪表板 `/admin/dashboard`：统计概览卡片、7 天文档入库/聊天趋势折线图（ECharts）、数据库/Redis/OCR/LLM/运行时间状态面板、知识库治理近期操作表格；当前上传入口未区分文档类型，仪表盘不再展示文档类型饼图。
+- 仪表盘统计概览卡片补充用户数、活跃知识库、文档总数、知识片段、聊天会话、聊天消息的专用内联 SVG 图标，保持 42px teal 图标块和白色极简工作台视觉一致。
 - 首页更新：Stage 标识更新到 Stage 8，新增「知识检索」卡片（所有用户）和「系统仪表盘」卡片（仅 admin）。
+- 首页二阶段视觉优化：重构为企业级白色极简 RAG 工作台，新增品牌区、核心 CTA、角色/阶段概览、权限化模块入口和「入库 → 检索 → 问答 → 治理」流程说明，继续沿用 teal 主色 `#0F766E` 与 8px 圆角约束。
 - 路由守卫：`/search` 需登录，`/admin/dashboard` 需 admin。
 - 视觉语言与 Stage 7 一致：白色/近白背景、细灰边框、teal 主色 `#0F766E`、圆角 ≤ 8px。
 
@@ -62,3 +64,10 @@
 - 容器 Alembic：`stage_8_search_dashboard (head)`。
 
 > 备注：前端生产构建仍提示独立 `charts` chunk minified 体积约 534 kB（gzip 约 181 kB），该 chunk 仅管理员仪表板懒加载，不影响登录后首页/搜索/聊天首屏；当前未通过调高 Vite 阈值隐藏该提示。
+
+## 2026-05-13 搜索空结果修复
+
+- 知识检索统一由 `SearchService` 自动补 query embedding，搜索页与导出任务不再出现同词不同召回路径。
+- SeekDB 原生 BM25/稀疏检索返回空候选或原生稀疏索引异常时，检索会按轨道回退到本地词频/向量兜底；单轨命中时保留原始分数，不再退化为纯排名分，避免搜索页在已有 ready chunks 与热词数据时仍显示“未找到匹配结果”或第一页结果明显失真。
+- 热词聚合改为过滤禁用文档并清洗 HTML 表格标签，搜索结果 snippet 也会去掉 `td/tr` 一类标签噪音。
+- 验证：`python -m pytest backend/tests/test_search_dashboard.py backend/tests/test_retriever.py`，26 passed；`ruff check backend/app/api/search.py backend/app/services/rag/search_service.py backend/app/services/rag/retriever.py backend/app/services/rag/vector_utils.py backend/app/services/rag/query_embedding.py backend/tests/test_search_dashboard.py backend/tests/test_retriever.py` 通过。

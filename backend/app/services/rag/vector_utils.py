@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import math
 import re
 from collections.abc import Mapping, Sequence
@@ -10,6 +11,8 @@ SPARSE_DIMENSION = 500_000
 
 _ASCII_TOKEN_RE = re.compile(r"[a-z0-9_]+")
 _CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff]+")
+_HTML_TAG_RE = re.compile(r"</?[A-Za-z][^>]*>")
+_WHITESPACE_RE = re.compile(r"\s+")
 
 
 def dense_vector_literal(values: Sequence[float]) -> str:
@@ -17,9 +20,16 @@ def dense_vector_literal(values: Sequence[float]) -> str:
     return "[" + ",".join(f"{value:.8g}" for value in finite_values) + "]"
 
 
+def clean_display_text(text: str) -> str:
+    normalized = html.unescape(text or "")
+    normalized = _HTML_TAG_RE.sub(" ", normalized)
+    normalized = _WHITESPACE_RE.sub(" ", normalized)
+    return normalized.strip()
+
+
 def text_term_weights(text: str) -> dict[str, float]:
     """Build stable lexical weights for fallback and SeekDB SPARSEVECTOR probes."""
-    lowered = text.lower()
+    lowered = clean_display_text(text).lower()
     weights: dict[str, float] = {}
     for token in _ASCII_TOKEN_RE.findall(lowered):
         weights[token] = weights.get(token, 0.0) + 1.0

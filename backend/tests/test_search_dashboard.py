@@ -283,6 +283,42 @@ def test_search_pagination() -> None:
     assert len(data["items"]) <= 1
 
 
+def test_search_falls_back_when_native_returns_no_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.rag.retriever import Retriever
+
+    async def _empty_native(*_args, **_kwargs):
+        return []
+
+    async def _seed_probe_term() -> None:
+        async with AsyncSessionLocal() as session:
+            chunk = await session.get(KnowledgeChunkV2, "chunk-1")
+            assert chunk is not None
+            chunk.content = "<td>native fallback probe content</td>"
+            await session.commit()
+
+    _seed_multi_kb()
+    asyncio.run(_seed_probe_term())
+    monkeypatch.setattr(Retriever, "_can_use_seekdb_native", lambda _self: True)
+    monkeypatch.setattr(Retriever, "_seekdb_vector_search", _empty_native)
+    monkeypatch.setattr(Retriever, "_seekdb_lexical_search", _empty_native)
+
+    client = TestClient(create_app())
+    token = _login(client)
+    resp = client.post(
+        "/api/v2/search/documents",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"query": "probe", "kb_id": "kb-1", "page": 1, "page_size": 10},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] >= 1
+    assert data["items"][0]["document_id"] == "doc-1"
+    assert "<td>" not in data["items"][0]["snippet"]
+
+
 def test_search_content_type_filter() -> None:
     _seed_multi_kb()
     client = TestClient(create_app())
@@ -318,6 +354,60 @@ def test_hot_keywords() -> None:
     assert len(data["items"]) > 0
     assert "keyword" in data["items"][0]
     assert "count" in data["items"][0]
+
+
+def test_hot_keywords_strip_markup_and_ignore_disabled_docs() -> None:
+    async def _prepare() -> None:
+        async with AsyncSessionLocal() as session:
+            chunk = await session.get(KnowledgeChunkV2, "chunk-1")
+            assert chunk is not None
+            chunk.content = "<td>安全装置</td>"
+            disabled_doc = Document(
+                id="doc-disabled",
+                knowledge_base_id="kb-1",
+                uploader_id="admin-id",
+                title="disabled",
+                filename="disabled.pdf",
+                mime="application/pdf",
+                size_bytes=100,
+                sha256="sha-disabled",
+                storage_path="disabled.pdf",
+                status="disabled",
+                doc_kind="spec",
+            )
+            disabled_chunk = KnowledgeChunkV2(
+                id="chunk-disabled",
+                knowledge_base_id="kb-1",
+                document_id="doc-disabled",
+                chunk_index=0,
+                content="forbiddenprobe forbiddenprobe forbiddenprobe forbiddenprobe",
+                section_path=["x"],
+                section_id="x",
+                page_start=1,
+                page_end=1,
+                content_type="paragraph",
+                doc_kind="spec",
+                tokens=4,
+                sha256="sha-disabled-chunk",
+                vector=[1.0] + [0.0] * 255,
+            )
+            session.add(disabled_doc)
+            session.add(disabled_chunk)
+            await session.commit()
+
+    _seed_multi_kb()
+    asyncio.run(_prepare())
+    client = TestClient(create_app())
+    token = _login(client)
+    resp = client.get(
+        "/api/v2/search/hot-keywords",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    keywords = {item["keyword"] for item in resp.json()["items"]}
+    assert "td" not in keywords
+    assert "forbiddenprobe" not in keywords
+    assert "安全" in keywords or "装置" in keywords
 
 
 def test_doc_types() -> None:

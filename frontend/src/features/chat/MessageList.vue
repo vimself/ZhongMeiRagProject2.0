@@ -85,7 +85,7 @@ const items = computed(() =>
       <div class="message" :class="`message--${msg.role}`">
         <div class="message__meta">
           <span class="message__role">
-            {{ msg.role === 'user' ? '你' : msg.role === 'assistant' ? '中煤 RAG' : '系统' }}
+            {{ msg.role === 'user' ? '用户' : msg.role === 'assistant' ? '中煤 RAG' : '系统' }}
           </span>
           <span v-if="msg.status === 'error'" class="message__status message__status--error">
             错误
@@ -204,9 +204,9 @@ const items = computed(() =>
 }
 
 .message__bubble--user {
-  background: #111827;
-  color: #fafaf9;
-  border-color: #111827;
+  background: #fff;
+  color: #111827;
+  border-color: #e5e7eb;
   white-space: pre-wrap;
 }
 

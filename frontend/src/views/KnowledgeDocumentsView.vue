@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  Back,
+  ArrowLeft,
   Delete,
   Document as DocumentIcon,
   Refresh,
@@ -429,14 +429,19 @@ onUnmounted(() => {
 <template>
   <main class="doc-page">
     <header class="page-header">
-      <ElButton :icon="Back" text @click="router.push('/knowledge')">返回知识库</ElButton>
-      <div>
-        <h1>{{ kbName || '知识库文档' }}</h1>
-        <p>入库文档、解析进度与结构化资产</p>
+      <div class="header-left">
+        <div class="brand-mark">ZM</div>
+        <div class="header-copy">
+          <span class="header-eyebrow">文档管理</span>
+          <h1>{{ kbName || '知识库文档' }}</h1>
+        </div>
       </div>
+      <ElButton :icon="ArrowLeft" text class="back-btn" @click="router.push('/knowledge')">
+        返回知识库
+      </ElButton>
     </header>
 
-    <section class="toolbar" :class="{ 'toolbar--filters-only': !canUpload }">
+    <section class="toolbar">
       <div v-if="canUpload" class="upload-panel">
         <ElUpload
           v-model:file-list="uploadFiles"
@@ -451,12 +456,12 @@ onUnmounted(() => {
           :on-exceed="handleUploadExceed"
         >
           <div class="upload-inline">
-            <UploadFilled />
+            <UploadFilled class="upload-icon" />
             <span>{{ uploadLabel }}</span>
           </div>
         </ElUpload>
         <div v-if="queuedUploadFiles.length > 0" class="upload-actions">
-          <span>{{ queuedUploadFiles.length }} / {{ MAX_BATCH_FILES }}</span>
+          <span class="upload-count">{{ queuedUploadFiles.length }} / {{ MAX_BATCH_FILES }}</span>
           <ElButton type="primary" size="small" :loading="uploading" @click="submitUploadBatch">
             上传入队
           </ElButton>
@@ -474,7 +479,7 @@ onUnmounted(() => {
           @keyup.enter="handleSearch"
           @clear="handleSearch"
         />
-        <ElSelect v-model="statusFilter" @change="handleSearch">
+        <ElSelect v-model="statusFilter" placeholder="全部状态" @change="handleSearch">
           <ElOption
             v-for="item in statusOptions"
             :key="item.value"
@@ -482,20 +487,28 @@ onUnmounted(() => {
             :value="item.value"
           />
         </ElSelect>
-        <ElButton :icon="Refresh" @click="loadDocuments">刷新</ElButton>
-        <ElButton
-          v-if="canDelete"
-          :icon="Delete"
-          type="danger"
-          :disabled="selectedDocumentIds.length === 0"
-          @click="handleBatchDelete"
-        >
-          批量删除
-        </ElButton>
+        <div class="filter-actions">
+          <ElButton :icon="Refresh" text @click="loadDocuments">刷新</ElButton>
+          <ElButton
+            v-if="canDelete"
+            :icon="Delete"
+            type="danger"
+            plain
+            :disabled="selectedDocumentIds.length === 0"
+            @click="handleBatchDelete"
+          >
+            批量删除
+          </ElButton>
+        </div>
       </div>
     </section>
 
-    <ElProgress v-if="uploadPercent > 0" :percentage="uploadPercent" class="upload-progress" />
+    <ElProgress
+      v-if="uploadPercent > 0"
+      :percentage="uploadPercent"
+      :stroke-width="6"
+      class="upload-progress"
+    />
 
     <section class="table-shell">
       <ElTable
@@ -510,8 +523,10 @@ onUnmounted(() => {
         <ElTableColumn label="文件名" min-width="300">
           <template #default="{ row }: { row: DocumentOut }">
             <div class="file-cell">
-              <DocumentIcon />
-              <div>
+              <div class="file-icon-tile">
+                <DocumentIcon />
+              </div>
+              <div class="file-info">
                 <strong>{{ row.title }}</strong>
               </div>
             </div>
@@ -519,12 +534,12 @@ onUnmounted(() => {
         </ElTableColumn>
         <ElTableColumn label="大小" width="88">
           <template #default="{ row }: { row: DocumentOut }">
-            {{ formatSize(row.size_bytes) }}
+            <span class="size-cell">{{ formatSize(row.size_bytes) }}</span>
           </template>
         </ElTableColumn>
         <ElTableColumn label="状态" width="86">
           <template #default="{ row }: { row: DocumentOut }">
-            <ElTag :type="statusType(statusOf(row))" size="small">
+            <ElTag :type="statusType(statusOf(row))" size="small" class="status-tag">
               {{ statusLabel(statusOf(row)) }}
             </ElTag>
           </template>
@@ -534,14 +549,18 @@ onUnmounted(() => {
             <ElProgress
               :percentage="progressOf(row)"
               :status="progressStatusOf(row)"
-              :stroke-width="8"
+              :stroke-width="6"
             />
           </template>
         </ElTableColumn>
-        <ElTableColumn label="上传者" width="110" prop="uploader_name" />
+        <ElTableColumn label="上传者" width="110">
+          <template #default="{ row }: { row: DocumentOut }">
+            <span class="meta-cell">{{ row.uploader_name }}</span>
+          </template>
+        </ElTableColumn>
         <ElTableColumn label="创建时间" width="108">
           <template #default="{ row }: { row: DocumentOut }">
-            {{ formatDateTime(row.created_at) }}
+            <span class="time-cell">{{ formatDateTime(row.created_at) }}</span>
           </template>
         </ElTableColumn>
         <ElTableColumn label="操作" width="220" align="right">
@@ -583,15 +602,18 @@ onUnmounted(() => {
       </ElTable>
 
       <div v-if="total === 0 && !loading" class="empty-wrapper">
-        <ElEmpty description="暂无入库文档" />
+        <ElEmpty description="暂无入库文档">
+          <ElButton v-if="canUpload" type="primary" plain>上传第一份文档</ElButton>
+        </ElEmpty>
       </div>
 
       <div v-if="total > pageSize" class="pagination-wrapper">
+        <span class="pagination-info">共 {{ total }} 份文档</span>
         <ElPagination
           :current-page="page"
           :page-size="pageSize"
           :total="total"
-          layout="total, prev, pager, next"
+          layout="prev, pager, next"
           @current-change="
             (value: number) => {
               page = value
@@ -602,11 +624,24 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <ElDrawer v-model="drawerVisible" title="文档详情" size="560px">
+    <ElDrawer
+      v-model="drawerVisible"
+      :size="600"
+      class="detail-drawer"
+      :z-index="3000"
+      append-to-body
+    >
+      <template #header>
+        <div class="drawer-header">
+          <h2 class="drawer-title">文档详情</h2>
+          <span class="drawer-subtitle">解析结构与资产信息</span>
+        </div>
+      </template>
       <div v-loading="detailLoading" class="detail">
         <template v-if="detail">
-          <div class="detail-header">
-            <h2>{{ detail.title }}</h2>
+          <div class="detail-hero">
+            <h2 class="detail-hero-title">{{ detail.title }}</h2>
+            <p class="detail-hero-meta">{{ detail.filename }} · {{ statsText() }}</p>
             <ElButton
               v-if="detail.status === 'ready'"
               :icon="Monitor"
@@ -617,30 +652,39 @@ onUnmounted(() => {
               预览 PDF
             </ElButton>
           </div>
-          <p class="detail-sub">{{ detail.filename }} · {{ statsText() }}</p>
-          <section>
-            <h3>章节结构</h3>
+          <section class="detail-section">
+            <h3 class="detail-section-title">章节结构</h3>
             <ul v-if="outlineItems().length" class="outline">
-              <li v-for="item in outlineItems()" :key="String(item.section_path)">
-                <span :style="{ paddingLeft: `${(Number(item.level) - 1) * 14}px` }">
+              <li
+                v-for="item in outlineItems()"
+                :key="String(item.section_path)"
+                class="outline-item"
+              >
+                <span :style="{ paddingLeft: `${(Number(item.level) - 1) * 16}px` }">
                   {{ item.title }}
                 </span>
               </li>
             </ul>
-            <ElEmpty v-else description="暂无章节结构" />
+            <div v-else class="detail-empty">
+              <ElEmpty description="暂无章节结构" :image-size="80" />
+            </div>
           </section>
-          <section>
-            <h3>资产</h3>
+          <section class="detail-section">
+            <h3 class="detail-section-title">资产</h3>
             <div v-if="detail.assets.length" class="asset-grid">
               <div v-for="asset in detail.assets" :key="String(asset.id)" class="asset-item">
-                <span>{{ asset.kind }}</span>
-                <small>第 {{ asset.page_no || '—' }} 页</small>
+                <div class="asset-meta">
+                  <span class="asset-kind">{{ asset.kind }}</span>
+                  <small class="asset-page">第 {{ asset.page_no || '—' }} 页</small>
+                </div>
                 <ElButton text size="small" type="primary" @click="openAssetPreview(asset)">
                   查看
                 </ElButton>
               </div>
             </div>
-            <ElEmpty v-else description="暂无资产" />
+            <div v-else class="detail-empty">
+              <ElEmpty description="暂无资产" :image-size="80" />
+            </div>
           </section>
         </template>
       </div>
@@ -650,54 +694,125 @@ onUnmounted(() => {
 
 <style scoped>
 .doc-page {
+  --zm-primary: #0f766e;
+  --zm-primary-hover: #115e59;
+  --zm-primary-active: #134e4a;
+  --zm-text-strong: #0f172a;
+  --zm-text: #334155;
+  --zm-text-muted: #64748b;
+  --zm-bg: #f7fafc;
+  --zm-bg-soft: #f8fafc;
+  --zm-surface: #fff;
+  --zm-border: #dbe4ef;
+  --zm-border-soft: #e2e8f0;
+  --zm-teal-soft: rgb(15 118 110 / 8%);
+  --zm-teal-ring: rgb(15 118 110 / 12%);
+  --zm-radius: 8px;
+
   min-height: 100vh;
-  padding: 32px;
-  background: #f6f8fb;
-  color: #1f2937;
+  padding: 32px 40px 48px;
+  background: var(--zm-bg);
+  color: var(--zm-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
 }
 
 .page-header,
 .toolbar,
 .table-shell {
-  max-width: 1240px;
+  max-width: 1200px;
   margin-right: auto;
   margin-left: auto;
 }
 
+/* ── Page Header ── */
 .page-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
-  margin-bottom: 22px;
+  margin-bottom: 24px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  background: var(--zm-primary);
+  border-radius: var(--zm-radius);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  box-shadow: 0 14px 26px rgb(15 118 110 / 18%);
+}
+
+.header-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.header-eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--zm-text-muted);
 }
 
 .page-header h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
+  color: var(--zm-text-strong);
+  line-height: 1.3;
 }
 
-.page-header p {
-  margin: 4px 0 0;
-  color: #64748b;
-  font-size: 13px;
+.back-btn {
+  flex-shrink: 0;
+  height: 36px;
+  border-radius: var(--zm-radius);
+  font-weight: 500;
+  color: var(--zm-text-muted);
 }
 
+.back-btn:hover {
+  color: var(--zm-text);
+  background: var(--zm-bg-soft);
+}
+
+/* ── Toolbar ── */
 .toolbar {
   display: grid;
   grid-template-columns: minmax(260px, 360px) 1fr;
   gap: 16px;
   align-items: stretch;
-  margin-bottom: 14px;
-}
-
-.toolbar--filters-only {
-  grid-template-columns: 1fr;
+  margin-bottom: 16px;
 }
 
 .upload-panel {
   display: grid;
   gap: 8px;
+  padding: 16px;
+  background: var(--zm-surface);
+  border: 1px dashed var(--zm-border);
+  border-radius: var(--zm-radius);
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.upload-panel:hover {
+  border-color: var(--zm-primary);
+  box-shadow: 0 0 0 2px var(--zm-teal-ring);
 }
 
 .upload-inline {
@@ -705,14 +820,16 @@ onUnmounted(() => {
   gap: 10px;
   align-items: center;
   justify-content: center;
-  min-height: 72px;
-  color: #334155;
-  font-weight: 600;
+  min-height: 56px;
+  color: var(--zm-text);
+  font-weight: 500;
+  font-size: 14px;
 }
 
-.upload-inline svg {
-  width: 24px;
-  height: 24px;
+.upload-icon {
+  width: 22px;
+  height: 22px;
+  color: var(--zm-primary);
 }
 
 .upload-actions {
@@ -723,63 +840,107 @@ onUnmounted(() => {
   min-height: 28px;
 }
 
-.upload-actions span {
-  color: #64748b;
+.upload-count {
+  color: var(--zm-text-muted);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .filters {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) 160px auto auto;
-  gap: 10px;
-  align-content: center;
-  padding: 14px;
-  background: #fff;
-  border: 1px solid #dbe3ee;
-  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  padding: 12px 20px;
+  background: var(--zm-surface);
+  border: 1px solid var(--zm-border-soft);
+  border-radius: var(--zm-radius);
 }
 
+.filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* ── Upload Progress ── */
 .upload-progress {
-  max-width: 1240px;
-  margin: 0 auto 14px;
+  max-width: 1200px;
+  margin: 0 auto 16px;
 }
 
+/* ── Table Shell ── */
 .table-shell {
   overflow: hidden;
-  background: #fff;
-  border: 1px solid #dbe3ee;
-  border-radius: 8px;
+  background: var(--zm-surface);
+  border: 1px solid var(--zm-border-soft);
+  border-radius: var(--zm-radius);
 }
 
 .file-cell {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: flex-start;
 }
 
-.file-cell svg {
-  flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  color: #2563eb;
+.file-icon-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  background: var(--zm-teal-soft);
+  border: 1px solid var(--zm-teal-ring);
+  border-radius: 6px;
+  color: var(--zm-primary);
 }
 
-.file-cell > div {
+.file-icon-tile svg {
+  width: 18px;
+  height: 18px;
+}
+
+.file-info {
   min-width: 0;
 }
 
-.file-cell strong {
+.file-info strong {
   display: block;
   overflow-wrap: anywhere;
   white-space: normal;
   font-size: 14px;
+  font-weight: 600;
   line-height: 1.45;
+  color: var(--zm-text-strong);
+}
+
+.size-cell {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--zm-text-muted);
+}
+
+.meta-cell {
+  font-size: 13.5px;
+  color: var(--zm-text);
+}
+
+.time-cell {
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--zm-text-muted);
+}
+
+.status-tag {
+  border-radius: 6px;
 }
 
 .action-btns {
   display: flex;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: nowrap;
   min-width: 198px;
 }
@@ -790,101 +951,302 @@ onUnmounted(() => {
   padding-right: 4px;
   padding-left: 4px;
   margin-left: 0;
+  border-radius: 6px;
+  font-size: 13px;
 }
 
 .empty-wrapper {
-  padding: 44px 0;
+  padding: 48px 0;
 }
 
 .pagination-wrapper {
   display: flex;
-  justify-content: flex-end;
-  padding: 16px;
-}
-
-.detail-header {
-  display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--zm-border-soft);
 }
 
-.detail-header h2 {
+.pagination-info {
+  font-size: 13px;
+  color: var(--zm-text-muted);
+}
+
+/* ── Element Plus Overrides ── */
+.documents-table :deep(.el-button--primary) {
+  --el-button-bg-color: #0f766e;
+  --el-button-border-color: #0f766e;
+  --el-button-hover-bg-color: #115e59;
+  --el-button-hover-border-color: #115e59;
+  --el-button-active-bg-color: #134e4a;
+  --el-button-active-border-color: #134e4a;
+  --el-button-text-color: #0f766e;
+}
+
+.documents-table :deep(.el-button--danger.is-text) {
+  --el-button-text-color: #b91c1c;
+}
+
+.documents-table :deep(.el-button--danger.is-text:hover) {
+  background: #fef2f2;
+}
+
+.documents-table :deep(.el-button--warning.is-text) {
+  --el-button-text-color: #b45309;
+}
+
+.documents-table :deep(.el-button--warning.is-text:hover) {
+  background: #fffbeb;
+}
+
+.documents-table :deep(.el-button--primary.is-text) {
+  --el-button-text-color: #0f766e;
+}
+
+.documents-table :deep(.el-button--primary.is-text:hover) {
+  background: var(--zm-teal-soft);
+}
+
+.documents-table :deep(.el-table__header th) {
+  background: var(--zm-bg-soft);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--zm-text-muted);
+}
+
+.documents-table :deep(.el-table__row td) {
+  font-size: 13.5px;
+  border-bottom-color: var(--zm-border-soft);
+}
+
+.documents-table :deep(.el-table__row:hover td) {
+  background: var(--zm-bg-soft);
+}
+
+.filters :deep(.el-input__wrapper) {
+  border-radius: var(--zm-radius);
+  box-shadow: 0 0 0 1px var(--zm-border-soft) inset;
+  transition:
+    box-shadow 0.2s,
+    border-color 0.2s;
+}
+
+.filters :deep(.el-input__wrapper:hover) {
+  box-shadow: 0 0 0 1px var(--zm-border) inset;
+}
+
+.filters :deep(.el-input__wrapper.is-focus) {
+  box-shadow:
+    0 0 0 1px var(--zm-primary) inset,
+    0 0 0 2px var(--zm-teal-ring);
+}
+
+.filters :deep(.el-select) {
+  width: 140px;
+}
+
+.filters :deep(.el-select .el-input__wrapper) {
+  border-radius: var(--zm-radius);
+}
+
+.upload-progress :deep(.el-progress-bar__inner) {
+  background-color: var(--zm-primary);
+}
+
+/* ── Drawer ── */
+.detail-drawer :deep(.el-drawer__header) {
+  padding: 20px 24px;
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--zm-border-soft);
+  background: var(--zm-surface);
+}
+
+.detail-drawer :deep(.el-drawer__body) {
+  padding: 0;
+  background: var(--zm-bg);
+}
+
+.drawer-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.drawer-title {
   margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--zm-text-strong);
 }
 
-.detail h2,
-.detail h3 {
-  margin: 0 0 10px;
+.drawer-subtitle {
+  font-size: 12.5px;
+  color: var(--zm-text-muted);
 }
 
-.detail h2 {
-  font-size: 20px;
+.detail {
+  padding: 24px;
 }
 
-.detail h3 {
-  font-size: 15px;
+.detail-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px 24px;
+  margin-bottom: 20px;
+  background: var(--zm-surface);
+  border: 1px solid var(--zm-border-soft);
+  border-radius: var(--zm-radius);
 }
 
-.detail section {
-  padding: 18px 0;
-  border-top: 1px solid #e5eaf1;
+.detail-hero-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--zm-text-strong);
+  line-height: 1.4;
 }
 
-.detail-sub {
-  margin: 0 0 18px;
-  color: #64748b;
+.detail-hero-meta {
+  margin: 0;
+  font-size: 13px;
+  color: var(--zm-text-muted);
+}
+
+.detail-section {
+  padding: 20px 24px;
+  margin-bottom: 16px;
+  background: var(--zm-surface);
+  border: 1px solid var(--zm-border-soft);
+  border-radius: var(--zm-radius);
+}
+
+.detail-section-title {
+  margin: 0 0 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--zm-border-soft);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--zm-text-strong);
 }
 
 .outline {
   display: grid;
-  gap: 8px;
+  gap: 4px;
   padding: 0;
   margin: 0;
   list-style: none;
 }
 
-.outline li {
-  color: #334155;
-  font-size: 14px;
+.outline-item {
+  padding: 6px 10px;
+  font-size: 13.5px;
+  color: var(--zm-text);
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.outline-item:hover {
+  background: var(--zm-bg-soft);
+}
+
+.detail-empty {
+  padding: 16px 0;
 }
 
 .asset-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 10px;
 }
 
 .asset-item {
-  display: grid;
-  gap: 4px;
-  padding: 10px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--zm-bg-soft);
+  border: 1px solid var(--zm-border-soft);
+  border-radius: var(--zm-radius);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
 
-.asset-item span {
+.asset-item:hover {
+  border-color: var(--zm-primary);
+  box-shadow: 0 0 0 1px var(--zm-teal-ring);
+}
+
+.asset-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.asset-kind {
+  font-size: 13px;
   font-weight: 600;
+  color: var(--zm-text-strong);
 }
 
-.asset-item small {
-  color: #64748b;
+.asset-page {
+  font-size: 12px;
+  color: var(--zm-text-muted);
 }
 
+/* ── Responsive ── */
 @media (width <= 860px) {
   .doc-page {
-    padding: 20px;
+    padding: 24px 20px 40px;
   }
 
   .page-header {
     align-items: flex-start;
     flex-direction: column;
+    gap: 12px;
   }
 
-  .toolbar,
-  .filters {
+  .toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filters :deep(.el-select) {
+    width: 100%;
+  }
+
+  .filter-actions {
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+}
+
+@media (width <= 640px) {
+  .doc-page {
+    padding: 20px 16px 32px;
+  }
+
+  .page-header h1 {
+    font-size: 20px;
+  }
+
+  .table-shell {
+    overflow-x: auto;
+  }
+
+  .pagination-wrapper {
+    flex-direction: column;
+    gap: 12px;
+    align-items: center;
   }
 }
 </style>

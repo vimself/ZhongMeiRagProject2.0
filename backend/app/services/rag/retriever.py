@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.document import Document, KnowledgeChunkV2
 from app.services.deletion import DOCUMENT_DELETING_STATUS
 from app.services.rag.vector_utils import (
+    clean_display_text,
     dense_vector_literal,
     sparse_vector_literal,
     text_term_weights,
@@ -47,6 +48,8 @@ class Retriever:
         query_vector: list[float] | None = None,
     ) -> list[RetrievalResult]:
         filters = filters or {}
+        cleaned_query = clean_display_text(query)
+        loaded_chunks: list[KnowledgeChunkV2] | None = None
         chunks: list[KnowledgeChunkV2]
         if self._can_use_seekdb_native():
             try:
@@ -55,17 +58,57 @@ class Retriever:
                     if query_vector
                     else []
                 )
-                bm25_results = await self._seekdb_lexical_search(kb_id, query, filters, k=k * 2)
+                bm25_results = await self._seekdb_lexical_search(
+                    kb_id,
+                    cleaned_query,
+                    filters,
+                    k=k * 2,
+                )
+                needs_vector_fallback = query_vector is not None and not vector_results
+                needs_bm25_fallback = bool(cleaned_query) and not bm25_results
+                if needs_vector_fallback or needs_bm25_fallback:
+                    loaded_chunks = await self._load_chunks(kb_id, filters)
+                if needs_vector_fallback and loaded_chunks is not None:
+                    vector_results = self._vector_search_with_query_vector(
+                        loaded_chunks,
+                        query_vector,
+                        k=k * 2,
+                    )
+                if needs_bm25_fallback and loaded_chunks is not None:
+                    bm25_results = self._bm25_search(loaded_chunks, cleaned_query, k=k * 2)
                 candidate_ids = [chunk_id for chunk_id, _ in vector_results + bm25_results]
-                chunks = await self._load_chunks_by_ids(candidate_ids)
+                if candidate_ids:
+                    chunks = (
+                        self._loaded_chunks_by_ids(loaded_chunks, candidate_ids)
+                        if loaded_chunks is not None
+                        else await self._load_chunks_by_ids(candidate_ids)
+                    )
+                else:
+                    chunks = []
+                if not chunks:
+                    chunks = loaded_chunks or await self._load_chunks(kb_id, filters)
+                    vector_results, bm25_results = self._fallback_search_tracks(
+                        chunks,
+                        query=cleaned_query,
+                        k=k * 2,
+                        query_vector=query_vector,
+                    )
             except SQLAlchemyError:
                 chunks = await self._load_chunks(kb_id, filters)
-                vector_results = self._vector_search(chunks, query, k=k * 2)
-                bm25_results = self._bm25_search(chunks, query, k=k * 2)
+                vector_results, bm25_results = self._fallback_search_tracks(
+                    chunks,
+                    query=cleaned_query,
+                    k=k * 2,
+                    query_vector=query_vector,
+                )
         else:
             chunks = await self._load_chunks(kb_id, filters)
-            vector_results = self._vector_search(chunks, query, k=k * 2)
-            bm25_results = self._bm25_search(chunks, query, k=k * 2)
+            vector_results, bm25_results = self._fallback_search_tracks(
+                chunks,
+                query=cleaned_query,
+                k=k * 2,
+                query_vector=query_vector,
+            )
         if not chunks:
             return []
         # RRF fusion
@@ -81,7 +124,8 @@ class Retriever:
             if chunk is None:
                 continue
             content = chunk.content
-            snippet = content[:200] if len(content) > 200 else content
+            snippet_source = clean_display_text(content)
+            snippet = snippet_source[:200] if len(snippet_source) > 200 else snippet_source
             bbox = chunk.bbox_json
             results.append(
                 RetrievalResult(
@@ -138,6 +182,17 @@ class Retriever:
         row_map = {row.id: row for row in rows}
         return [row_map[chunk_id] for chunk_id in unique_ids if chunk_id in row_map]
 
+    @staticmethod
+    def _loaded_chunks_by_ids(
+        chunks: list[KnowledgeChunkV2] | None,
+        chunk_ids: list[str],
+    ) -> list[KnowledgeChunkV2]:
+        if not chunks:
+            return []
+        unique_ids = list(dict.fromkeys(chunk_ids))
+        chunk_map = {chunk.id: chunk for chunk in chunks}
+        return [chunk_map[chunk_id] for chunk_id in unique_ids if chunk_id in chunk_map]
+
     async def _load_doc_titles(self, doc_ids: set[str]) -> dict[str, str]:
         if not doc_ids:
             return {}
@@ -184,6 +239,8 @@ class Retriever:
         filters: dict[str, Any],
         k: int,
     ) -> list[tuple[str, float]]:
+        if not query.strip():
+            return []
         try:
             bm25_results = await self._seekdb_bm25_search(kb_id, query, filters, k=k)
         except SQLAlchemyError:
@@ -292,7 +349,42 @@ class Retriever:
             chunk_vec = chunk.vector
             if not chunk_vec or not isinstance(chunk_vec, list):
                 continue
+            if len(chunk_vec) != len(query_vec):
+                continue
             sim = self._cosine_similarity(query_vec, chunk_vec)
+            if sim > 0:
+                scored.append((chunk.id, sim))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:k]
+
+    def _fallback_search_tracks(
+        self,
+        chunks: list[KnowledgeChunkV2],
+        *,
+        query: str,
+        k: int,
+        query_vector: list[float] | None,
+    ) -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
+        if query_vector:
+            vector_results = self._vector_search_with_query_vector(chunks, query_vector, k=k)
+        else:
+            vector_results = self._vector_search(chunks, query, k=k)
+        return vector_results, self._bm25_search(chunks, query, k=k)
+
+    def _vector_search_with_query_vector(
+        self,
+        chunks: list[KnowledgeChunkV2],
+        query_vector: list[float],
+        k: int,
+    ) -> list[tuple[str, float]]:
+        scored: list[tuple[str, float]] = []
+        for chunk in chunks:
+            chunk_vec = chunk.vector
+            if not chunk_vec or not isinstance(chunk_vec, list):
+                continue
+            if len(chunk_vec) != len(query_vector):
+                continue
+            sim = self._cosine_similarity(query_vector, chunk_vec)
             if sim > 0:
                 scored.append((chunk.id, sim))
         scored.sort(key=lambda x: x[1], reverse=True)
@@ -305,11 +397,13 @@ class Retriever:
         k: int,
     ) -> list[tuple[str, float]]:
         """SQLite fallback: term frequency + phrase matching."""
-        query_lower = query.lower()
+        query_lower = clean_display_text(query).lower()
+        if not query_lower:
+            return []
         query_terms = list(text_term_weights(query_lower))
         scored: list[tuple[str, float]] = []
         for chunk in chunks:
-            content_lower = chunk.content.lower()
+            content_lower = clean_display_text(chunk.content).lower()
             lexical = sum(content_lower.count(term) for term in query_terms)
             phrase = 3 if query_lower in content_lower else 0
             score = float(lexical + phrase)
@@ -325,6 +419,10 @@ class Retriever:
         k: int,
         rrf_k: int = 60,
     ) -> list[tuple[str, float]]:
+        if vector_results and not bm25_results:
+            return vector_results[:k]
+        if bm25_results and not vector_results:
+            return bm25_results[:k]
         scores: dict[str, float] = {}
         active_tracks = int(bool(vector_results)) + int(bool(bm25_results))
         for rank, (chunk_id, _) in enumerate(vector_results):

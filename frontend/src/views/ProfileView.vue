@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { Back, Camera, Delete, Edit, Key, User } from '@element-plus/icons-vue'
+import { Back, Camera, Delete, Edit, Key } from '@element-plus/icons-vue'
 import ElAvatar from 'element-plus/es/components/avatar/index.mjs'
 import ElButton from 'element-plus/es/components/button/index.mjs'
-import ElCard from 'element-plus/es/components/card/index.mjs'
 import { ElForm, ElFormItem } from 'element-plus/es/components/form/index.mjs'
 import ElIcon from 'element-plus/es/components/icon/index.mjs'
 import ElInput from 'element-plus/es/components/input/index.mjs'
@@ -13,7 +12,6 @@ import ElUpload from 'element-plus/es/components/upload/index.mjs'
 import 'element-plus/theme-chalk/base.css'
 import 'element-plus/theme-chalk/el-avatar.css'
 import 'element-plus/theme-chalk/el-button.css'
-import 'element-plus/theme-chalk/el-card.css'
 import 'element-plus/theme-chalk/el-form.css'
 import 'element-plus/theme-chalk/el-form-item.css'
 import 'element-plus/theme-chalk/el-icon.css'
@@ -40,20 +38,15 @@ const passwordDialogVisible = ref(false)
 const avatarUploading = ref(false)
 const editForm = reactive({ display_name: '' })
 
-const avatarSrc = computed(() => {
-  if (profile.value?.avatar_url) {
-    return profile.value.avatar_url
-  }
-  return ''
-})
+const avatarSrc = computed(() => profile.value?.avatar_url || '')
 
-const roleLabel = computed(() => {
-  if (profile.value?.role === 'admin') return '管理员'
-  return '普通用户'
-})
+const roleLabel = computed(() => (profile.value?.role === 'admin' ? '管理员' : '普通用户'))
 
-const roleType = computed(() => {
-  return profile.value?.role === 'admin' ? 'danger' : 'info'
+const roleType = computed(() => (profile.value?.role === 'admin' ? 'danger' : 'info'))
+
+const initials = computed(() => {
+  const name = profile.value?.display_name || profile.value?.username || ''
+  return name.slice(0, 1).toUpperCase()
 })
 
 async function loadProfile() {
@@ -136,18 +129,35 @@ onMounted(loadProfile)
 
 <template>
   <main class="profile-page">
-    <header class="page-header">
-      <ElButton :icon="Back" text @click="router.push('/')">返回首页</ElButton>
-      <h1>个人中心</h1>
-    </header>
+    <!-- Back navigation -->
+    <div class="nav-bar">
+      <ElButton :icon="Back" text class="back-btn" @click="router.push('/')"> 返回首页 </ElButton>
+    </div>
 
-    <div v-loading="loading" class="profile-layout">
-      <!-- Avatar Section -->
-      <ElCard class="avatar-card" shadow="never">
-        <div class="avatar-section">
-          <div class="avatar-wrapper">
-            <ElAvatar :size="96" :src="avatarSrc" :icon="User" />
-            <div class="avatar-actions">
+    <div v-loading="loading" class="profile-container">
+      <!-- Hero Card: Avatar + Identity -->
+      <section class="hero-card">
+        <div class="hero-bg"></div>
+        <div class="hero-content">
+          <div class="avatar-block">
+            <div class="avatar-ring">
+              <ElAvatar v-if="avatarSrc" :size="108" :src="avatarSrc" class="avatar-img" />
+              <div v-else class="avatar-fallback">
+                <span>{{ initials }}</span>
+              </div>
+              <ElUpload
+                class="avatar-upload-trigger"
+                :show-file-list="false"
+                :http-request="handleAvatarUpload"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+              >
+                <div class="avatar-overlay" :class="{ uploading: avatarUploading }">
+                  <ElIcon :size="18"><Camera /></ElIcon>
+                  <span>{{ avatarUploading ? '上传中...' : '更换头像' }}</span>
+                </div>
+              </ElUpload>
+            </div>
+            <div class="avatar-actions-row">
               <ElUpload
                 :show-file-list="false"
                 :http-request="handleAvatarUpload"
@@ -157,8 +167,7 @@ onMounted(loadProfile)
                   :icon="Camera"
                   :loading="avatarUploading"
                   size="small"
-                  type="primary"
-                  plain
+                  class="btn-primary-teal"
                 >
                   上传头像
                 </ElButton>
@@ -167,27 +176,45 @@ onMounted(loadProfile)
                 v-if="profile?.avatar_url"
                 :icon="Delete"
                 size="small"
-                plain
+                class="btn-ghost"
                 @click="handleDeleteAvatar"
               >
                 删除
               </ElButton>
             </div>
+            <p class="avatar-hint">支持 JPG / PNG / WebP / GIF，最大 5 MB</p>
           </div>
-          <p class="avatar-hint">支持 JPG / PNG / WebP / GIF，最大 5 MB</p>
-        </div>
-      </ElCard>
 
-      <!-- Info Section -->
-      <ElCard class="info-card" shadow="never">
-        <template #header>
-          <div class="card-header">
-            <span>基本资料</span>
-            <ElButton v-if="!editMode" :icon="Edit" text size="small" @click="startEdit"
-              >编辑</ElButton
-            >
+          <div class="hero-identity">
+            <h1 class="profile-name">{{ profile?.display_name || profile?.username }}</h1>
+            <p class="profile-username">@{{ profile?.username }}</p>
+            <div class="hero-tags">
+              <ElTag :type="roleType" size="small" class="role-tag">{{ roleLabel }}</ElTag>
+              <ElTag
+                v-if="profile?.require_password_change"
+                type="warning"
+                size="small"
+                class="status-tag"
+              >
+                需要修改密码
+              </ElTag>
+              <ElTag v-else type="success" size="small" class="status-tag"> 账号正常 </ElTag>
+            </div>
           </div>
-        </template>
+        </div>
+      </section>
+
+      <!-- Info Card -->
+      <section class="info-card">
+        <div class="card-head">
+          <span class="kicker">ACCOUNT DETAILS</span>
+          <div class="card-head-row">
+            <h2>基本资料</h2>
+            <ElButton v-if="!editMode" :icon="Edit" text class="edit-btn" @click="startEdit">
+              编辑
+            </ElButton>
+          </div>
+        </div>
 
         <div v-if="!editMode" class="info-rows">
           <div class="info-row">
@@ -215,40 +242,46 @@ onMounted(loadProfile)
           </div>
           <div class="info-row">
             <span class="label">最后登录</span>
-            <span class="value">{{ formatDate(profile?.last_login_at ?? null) }}</span>
+            <span class="value text-muted">{{ formatDate(profile?.last_login_at ?? null) }}</span>
           </div>
           <div class="info-row">
             <span class="label">创建时间</span>
-            <span class="value">{{ formatDate(profile?.created_at ?? null) }}</span>
+            <span class="value text-muted">{{ formatDate(profile?.created_at ?? null) }}</span>
           </div>
         </div>
 
-        <ElForm v-else label-position="top">
+        <ElForm v-else label-position="top" class="edit-form">
           <ElFormItem label="展示名">
             <ElInput v-model="editForm.display_name" maxlength="128" show-word-limit />
           </ElFormItem>
           <div class="edit-actions">
-            <ElButton @click="cancelEdit">取消</ElButton>
-            <ElButton type="primary" :loading="loading" @click="saveProfile">保存</ElButton>
+            <ElButton class="btn-ghost" @click="cancelEdit">取消</ElButton>
+            <ElButton class="btn-primary-teal" :loading="loading" @click="saveProfile">
+              保存修改
+            </ElButton>
           </div>
         </ElForm>
-      </ElCard>
+      </section>
 
-      <!-- Password Section -->
-      <ElCard class="password-card" shadow="never">
-        <template #header>
-          <span>密码安全</span>
-        </template>
-        <div class="password-section">
-          <div class="password-info">
-            <ElIcon :size="20"><Key /></ElIcon>
-            <span>定期修改密码可以提高账号安全性</span>
+      <!-- Security Card -->
+      <section class="security-card">
+        <div class="card-head">
+          <span class="kicker">SECURITY</span>
+          <h2>密码安全</h2>
+        </div>
+        <div class="security-body">
+          <div class="security-icon-box">
+            <ElIcon :size="22"><Key /></ElIcon>
           </div>
-          <ElButton type="primary" plain :icon="Key" @click="passwordDialogVisible = true">
+          <div class="security-text">
+            <p class="security-title">修改密码</p>
+            <p class="security-desc">定期修改密码可以提高账号安全性，建议每 90 天更换一次</p>
+          </div>
+          <ElButton class="btn-primary-teal" :icon="Key" @click="passwordDialogVisible = true">
             修改密码
           </ElButton>
         </div>
-      </ElCard>
+      </section>
     </div>
 
     <ChangePasswordDialog v-model="passwordDialogVisible" />
@@ -256,83 +289,231 @@ onMounted(loadProfile)
 </template>
 
 <style scoped>
+/* ── Page ── */
 .profile-page {
   min-height: 100vh;
-  padding: 32px;
-  background: #f6f8fb;
-  color: #1f2937;
+  padding: 24px 32px 64px;
+  background: linear-gradient(180deg, rgb(248 251 251) 0%, #f4f7f9 100%);
+  color: #0f172a;
 }
 
-.page-header {
+.nav-bar {
+  max-width: 780px;
+  margin: 0 auto 20px;
+}
+
+.back-btn {
+  color: #64748b;
+  font-size: 14px;
+  transition: color 0.2s;
+}
+
+.back-btn:hover {
+  color: #0f766e;
+}
+
+.profile-container {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  max-width: 720px;
-  margin: 0 auto 24px;
-}
-
-.page-header h1 {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 700;
-}
-
-.profile-layout {
-  display: grid;
-  gap: 16px;
-  max-width: 720px;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 780px;
   margin: 0 auto;
 }
 
-.avatar-card :deep(.el-card__body) {
-  padding: 24px;
+/* ── Hero Card ── */
+.hero-card {
+  position: relative;
+  background: linear-gradient(135deg, #f0fdfa 0%, #e6f7f5 40%, #f0f9ff 100%);
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
-.avatar-section {
+.hero-bg {
+  display: none;
+}
+
+.hero-content {
+  display: flex;
+  align-items: flex-end;
+  gap: 28px;
+  padding: 28px 32px;
+}
+
+.avatar-block {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
+  flex-shrink: 0;
 }
 
-.avatar-wrapper {
+.avatar-ring {
+  position: relative;
+  width: 108px;
+  height: 108px;
+  border-radius: 50%;
+  border: 3px solid #e6f7f5;
+  box-shadow: 0 4px 16px rgb(15 23 42 / 8%);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.avatar-img {
+  display: block;
+}
+
+.avatar-fallback {
+  width: 108px;
+  height: 108px;
   display: flex;
   align-items: center;
-  gap: 20px;
+  justify-content: center;
+  background: linear-gradient(135deg, #0f766e, #0d9488);
+  color: #fff;
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -1px;
 }
 
-.avatar-actions {
+.avatar-upload-trigger {
+  display: block;
+}
+
+.avatar-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: rgb(15 23 42 / 55%);
+  color: #fff;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  border-radius: 50%;
+  backdrop-filter: blur(2px);
+}
+
+.avatar-overlay.uploading {
+  opacity: 1;
+}
+
+.avatar-ring:hover .avatar-overlay {
+  opacity: 1;
+}
+
+.avatar-actions-row {
   display: flex;
   gap: 8px;
 }
 
 .avatar-hint {
   margin: 0;
-  color: #8896a4;
-  font-size: 13px;
+  color: #94a3b8;
+  font-size: 12px;
+  text-align: center;
 }
 
-.info-card :deep(.el-card__header) {
-  padding: 16px 24px;
+.hero-identity {
+  flex: 1;
+  padding-bottom: 4px;
 }
 
-.card-header {
+.profile-name {
+  margin: 0;
+  font-size: clamp(22px, 3vw, 28px);
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1.2;
+}
+
+.profile-username {
+  margin: 4px 0 12px;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.hero-tags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.role-tag,
+.status-tag {
+  --el-tag-border-color: transparent;
+}
+
+/* ── Shared Card Styles ── */
+.info-card,
+.security-card {
+  background: #fff;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  padding: 28px 32px;
+  transition:
+    box-shadow 0.25s,
+    transform 0.25s;
+}
+
+.info-card:hover,
+.security-card:hover {
+  box-shadow: 0 12px 32px rgb(15 23 42 / 6%);
+  transform: translateY(-1px);
+}
+
+.card-head {
+  margin-bottom: 24px;
+}
+
+.kicker {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #0f766e;
+  margin-bottom: 6px;
+}
+
+.card-head-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-weight: 600;
 }
 
+.card-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.edit-btn {
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 500;
+  transition: color 0.2s;
+}
+
+.edit-btn:hover {
+  color: #115e59;
+}
+
+/* ── Info Rows ── */
 .info-rows {
-  display: grid;
-  gap: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .info-row {
   display: flex;
   align-items: center;
-  padding: 12px 0;
-  border-bottom: 1px solid #f0f2f5;
+  padding: 14px 0;
+  border-bottom: 1px solid #f1f5f9;
 }
 
 .info-row:last-child {
@@ -342,55 +523,124 @@ onMounted(loadProfile)
 .info-row .label {
   width: 100px;
   flex-shrink: 0;
-  color: #8896a4;
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #94a3b8;
 }
 
 .info-row .value {
   flex: 1;
   font-size: 14px;
+  color: #0f172a;
   word-break: break-all;
+}
+
+.text-muted {
+  color: #64748b;
+}
+
+/* ── Edit Form ── */
+.edit-form {
+  padding-top: 4px;
 }
 
 .edit-actions {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+  margin-top: 8px;
 }
 
-.password-card :deep(.el-card__header) {
-  padding: 16px 24px;
+/* ── Security Card ── */
+.security-body {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.security-icon-box {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  background: rgb(15 118 110 / 8%);
+  color: #0f766e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.security-text {
+  flex: 1;
+}
+
+.security-title {
+  margin: 0;
+  font-size: 15px;
   font-weight: 600;
+  color: #0f172a;
 }
 
-.password-section {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+.security-desc {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.5;
 }
 
-.password-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #52616f;
-  font-size: 14px;
+/* ── Shared Button Styles ── */
+.btn-primary-teal {
+  --el-button-bg-color: #0f766e;
+  --el-button-border-color: #0f766e;
+  --el-button-hover-bg-color: #115e59;
+  --el-button-hover-border-color: #115e59;
+  --el-button-active-bg-color: #134e4a;
+  --el-button-active-border-color: #134e4a;
+  --el-button-text-color: #fff;
+
+  border-radius: 8px;
+  font-weight: 500;
 }
 
+.btn-ghost {
+  --el-button-bg-color: #fff;
+  --el-button-border-color: #dbe4ef;
+  --el-button-text-color: #475569;
+  --el-button-hover-bg-color: #f8fafc;
+  --el-button-hover-border-color: #cbd5e1;
+  --el-button-hover-text-color: #0f172a;
+
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+/* ── Responsive ── */
 @media (width <= 640px) {
   .profile-page {
-    padding: 20px;
+    padding: 16px 16px 48px;
   }
 
-  .page-header {
+  .hero-content {
     flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .avatar-wrapper {
-    flex-direction: column;
+    align-items: center;
     text-align: center;
+    padding: 0 20px 24px;
+    gap: 16px;
+  }
+
+  .hero-identity {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .hero-tags {
+    justify-content: center;
+  }
+
+  .info-card,
+  .security-card {
+    padding: 20px;
   }
 
   .info-row {
@@ -401,11 +651,24 @@ onMounted(loadProfile)
 
   .info-row .label {
     width: auto;
+    font-size: 12px;
   }
 
-  .password-section {
+  .security-body {
     flex-direction: column;
     align-items: flex-start;
+    gap: 16px;
+  }
+}
+
+@media (width <= 480px) {
+  .avatar-actions-row {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .avatar-actions-row .el-button {
+    width: 100%;
   }
 }
 </style>

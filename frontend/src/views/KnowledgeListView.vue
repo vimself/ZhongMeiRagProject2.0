@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Back, Edit, Refresh, Search } from '@element-plus/icons-vue'
+import { ArrowLeft, Edit, Refresh, Search } from '@element-plus/icons-vue'
 import ElButton from 'element-plus/es/components/button/index.mjs'
 import ElCard from 'element-plus/es/components/card/index.mjs'
 import ElDialog from 'element-plus/es/components/dialog/index.mjs'
@@ -147,8 +147,14 @@ onMounted(loadKBs)
 <template>
   <main class="kb-page">
     <header class="page-header">
-      <ElButton :icon="Back" text @click="router.push('/')">返回首页</ElButton>
-      <h1>我的知识库</h1>
+      <div class="header-left">
+        <span class="brand-mark">ZM</span>
+        <div>
+          <p class="eyebrow">Knowledge</p>
+          <h1>我的知识库</h1>
+        </div>
+      </div>
+      <ElButton :icon="ArrowLeft" text @click="router.push('/')">返回首页</ElButton>
     </header>
 
     <!-- Toolbar -->
@@ -156,7 +162,7 @@ onMounted(loadKBs)
       <div class="toolbar">
         <ElInput
           v-model="search"
-          class="knowledge-search"
+          class="kb-search"
           placeholder="搜索知识库名称或描述"
           clearable
           :prefix-icon="Search"
@@ -173,6 +179,7 @@ onMounted(loadKBs)
     <ElCard class="table-card" shadow="never">
       <ElTable
         v-loading="loading"
+        class="kb-table"
         :data="kbs"
         stripe
         style="width: 100%"
@@ -235,6 +242,10 @@ onMounted(loadKBs)
       v-model="dialogVisible"
       title="编辑知识库"
       width="520px"
+      append-to-body
+      class="edit-kb-dialog"
+      modal-class="edit-kb-dialog-modal"
+      :z-index="3200"
       :close-on-click-modal="false"
     >
       <ElForm label-position="top">
@@ -261,33 +272,86 @@ onMounted(loadKBs)
 
 <style scoped>
 .kb-page {
+  --zm-primary: #0f766e;
+  --zm-primary-hover: #115e59;
+  --zm-primary-active: #134e4a;
+  --zm-text-strong: #0f172a;
+  --zm-text: #334155;
+  --zm-text-muted: #64748b;
+  --zm-bg: #f7fafc;
+  --zm-bg-soft: #f8fafc;
+  --zm-surface: #fff;
+  --zm-border: #dbe4ef;
+  --zm-border-soft: #e2e8f0;
+  --zm-teal-soft: rgb(15 118 110 / 8%);
+  --zm-radius: 8px;
+
   min-height: 100vh;
-  padding: 32px;
-  background: #f6f8fb;
-  color: #1f2937;
+  padding: 36px 48px 48px;
+  background: var(--zm-bg);
+  color: var(--zm-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
 }
 
+/* ── Page header ─────────────────────────────────────────────────── */
 .page-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+  gap: 16px;
   max-width: 1200px;
-  margin: 0 auto 24px;
+  margin: 0 auto 28px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brand-mark {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  background: var(--zm-primary);
+  border-radius: 8px;
+  box-shadow: 0 14px 26px rgb(15 118 110 / 18%);
+}
+
+.eyebrow {
+  margin: 0 0 2px;
+  color: var(--zm-text-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .page-header h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
+  color: var(--zm-text-strong);
+  line-height: 1.3;
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────────── */
+.toolbar-card {
+  max-width: 1200px;
+  margin: 0 auto;
+  border-radius: var(--zm-radius);
+  border: 1px solid var(--zm-border-soft);
+  background: var(--zm-surface);
+  box-shadow: none;
 }
 
 .toolbar-card :deep(.el-card__body) {
   padding: 16px 20px;
-}
-
-.toolbar-card {
-  max-width: 1200px;
-  margin: 0 auto;
 }
 
 .toolbar {
@@ -298,26 +362,84 @@ onMounted(loadKBs)
   flex-wrap: wrap;
 }
 
-.knowledge-search {
-  width: min(100%, 360px);
+.kb-search {
+  width: 280px;
+}
+
+.kb-search :deep(.el-input__wrapper) {
+  border-radius: var(--zm-radius);
+  box-shadow: none;
+  border: 1px solid var(--zm-border-soft);
+  transition: border-color 0.2s ease;
+}
+
+.kb-search :deep(.el-input__wrapper:hover),
+.kb-search :deep(.el-input__wrapper.is-focus) {
+  border-color: var(--zm-primary);
+  box-shadow: 0 0 0 2px var(--zm-teal-soft);
 }
 
 .toolbar-actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
+.toolbar-actions :deep(.el-button) {
+  border-radius: var(--zm-radius);
+  font-weight: 500;
+  height: 36px;
+  transition: all 0.2s ease;
+}
+
+.toolbar-actions :deep(.el-button--default) {
+  border-color: var(--zm-border-soft);
+  color: var(--zm-text);
+}
+
+.toolbar-actions :deep(.el-button--default:hover) {
+  background: var(--zm-bg-soft);
+  border-color: var(--zm-border);
+  color: var(--zm-text-strong);
+}
+
+/* ── Table ───────────────────────────────────────────────────────── */
 .table-card {
   max-width: 1200px;
   margin: 0 auto;
+  border-radius: var(--zm-radius);
+  border: 1px solid var(--zm-border-soft);
+  background: var(--zm-surface);
+  box-shadow: none;
 }
 
 .table-card :deep(.el-card__body) {
   padding: 0;
 }
 
+.kb-table :deep(.el-table__header th) {
+  background: var(--zm-bg-soft);
+  color: var(--zm-text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--zm-border-soft);
+}
+
+.kb-table :deep(.el-table__row td) {
+  border-bottom: 1px solid var(--zm-border-soft);
+  color: var(--zm-text);
+  font-size: 13.5px;
+  padding: 12px 0;
+}
+
+.kb-table :deep(.el-table__row:hover td) {
+  background: var(--zm-bg-soft);
+}
+
 .desc-cell {
-  color: #52616f;
+  color: var(--zm-text-muted);
   font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -327,34 +449,72 @@ onMounted(loadKBs)
 }
 
 .time-cell {
-  color: #8896a4;
-  font-size: 13px;
+  color: var(--zm-text-muted);
+  font-size: 12.5px;
 }
 
 .action-btns {
   display: flex;
-  gap: 0;
-  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
 }
 
+.kb-table .action-btns :deep(.el-button) {
+  margin-left: 0;
+  padding: 4px 10px;
+  font-size: 13px;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+
+.kb-table .action-btns :deep(.el-button--text) {
+  color: var(--zm-text-muted);
+}
+
+.kb-table .action-btns :deep(.el-button--text:hover) {
+  color: var(--zm-text-strong);
+  background: var(--zm-bg-soft);
+}
+
+/* ── Empty & Pagination ──────────────────────────────────────────── */
 .empty-wrapper {
-  padding: 40px 0;
+  padding: 64px 0;
 }
 
 .pagination-wrapper {
   display: flex;
   justify-content: flex-end;
-  padding: 16px 20px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--zm-border-soft);
 }
 
+.pagination-wrapper :deep(.el-pagination) {
+  font-size: 13px;
+}
+
+.pagination-wrapper :deep(.el-pager li) {
+  border-radius: 6px;
+  font-weight: 400;
+  min-width: 32px;
+  height: 32px;
+  line-height: 32px;
+}
+
+.pagination-wrapper :deep(.el-pager li.is-active) {
+  background: var(--zm-primary);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────── */
 @media (width <= 768px) {
   .kb-page {
-    padding: 20px;
+    padding: 20px 16px 40px;
   }
 
   .page-header {
     flex-direction: column;
     align-items: flex-start;
+    gap: 12px;
   }
 
   .toolbar {
@@ -362,12 +522,117 @@ onMounted(loadKBs)
     align-items: stretch;
   }
 
-  .knowledge-search {
+  .kb-search {
     width: 100%;
+  }
+
+  .toolbar-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .action-btns {
     flex-direction: column;
+    align-items: stretch;
   }
+}
+
+@media (width <= 480px) {
+  .page-header h1 {
+    font-size: 19px;
+  }
+}
+</style>
+
+<style>
+.edit-kb-dialog-modal {
+  z-index: 3200 !important;
+}
+
+.edit-kb-dialog {
+  z-index: 3201 !important;
+  overflow: hidden;
+  background: #fff;
+  border-radius: 12px;
+}
+
+.edit-kb-dialog .el-dialog__header {
+  padding: 20px 24px 16px;
+  margin-right: 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.edit-kb-dialog .el-dialog__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.edit-kb-dialog .el-dialog__body {
+  position: relative;
+  z-index: 1;
+  padding: 20px 24px;
+  background: #fff;
+}
+
+.edit-kb-dialog .el-dialog__footer {
+  position: relative;
+  z-index: 1;
+  padding: 14px 24px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.edit-kb-dialog .el-form-item__label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #334155;
+}
+
+.edit-kb-dialog .el-input__wrapper,
+.edit-kb-dialog .el-textarea__inner {
+  border-radius: 8px;
+  box-shadow: none;
+  border: 1px solid #e2e8f0;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.edit-kb-dialog .el-input__wrapper:hover,
+.edit-kb-dialog .el-textarea__inner:hover {
+  border-color: #cbd5e1;
+}
+
+.edit-kb-dialog .el-input__wrapper.is-focus,
+.edit-kb-dialog .el-textarea__inner:focus {
+  border-color: #0f766e;
+  box-shadow: 0 0 0 2px rgb(15 118 110 / 8%);
+}
+
+.edit-kb-dialog .el-button {
+  border-radius: 8px;
+  font-weight: 500;
+  height: 36px;
+  transition: all 0.2s ease;
+}
+
+.edit-kb-dialog .el-button--default {
+  border-color: #e2e8f0;
+  color: #334155;
+}
+
+.edit-kb-dialog .el-button--default:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.edit-kb-dialog .el-button--primary {
+  background: #0f766e;
+  border-color: #0f766e;
+}
+
+.edit-kb-dialog .el-button--primary:hover {
+  background: #115e59;
+  border-color: #115e59;
 }
 </style>

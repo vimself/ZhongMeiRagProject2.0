@@ -12,6 +12,7 @@ from app.models.auth import User
 from app.models.document import Document, KnowledgeChunkV2
 from app.models.knowledge_base import KnowledgeBase, KnowledgeBasePermission
 from app.services.deletion import DOCUMENT_DELETING_STATUS
+from app.services.rag.query_embedding import get_query_embedding
 from app.services.rag.retriever import RetrievalResult, Retriever
 from app.services.rag.vector_utils import text_term_weights
 
@@ -51,6 +52,8 @@ class SearchService:
         accessible_ids = await self.get_accessible_kb_ids(user)
         if not accessible_ids:
             return [], 0
+        if query and query_vector is None:
+            query_vector = await get_query_embedding(query)
 
         if kb_id:
             if kb_id not in accessible_ids:
@@ -134,7 +137,11 @@ class SearchService:
 
         result = await self.db.execute(
             select(KnowledgeChunkV2.content)
-            .where(KnowledgeChunkV2.knowledge_base_id.in_(accessible_ids))
+            .join(Document, Document.id == KnowledgeChunkV2.document_id)
+            .where(
+                KnowledgeChunkV2.knowledge_base_id.in_(accessible_ids),
+                Document.status.notin_(("disabled", DOCUMENT_DELETING_STATUS)),
+            )
             .limit(5000)
         )
         counter: Counter[str] = Counter()
