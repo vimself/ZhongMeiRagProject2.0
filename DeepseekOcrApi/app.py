@@ -53,6 +53,7 @@ Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
 processor = PDFOCRProcessor()
 task_queue: asyncio.PriorityQueue[tuple[int, float, str]] = asyncio.PriorityQueue(maxsize=QUEUE_SIZE)
 active_sessions: set[str] = set()
+cancelled_sessions: set[str] = set()
 worker_task: asyncio.Task[None] | None = None
 cleanup_task: asyncio.Task[None] | None = None
 
@@ -92,6 +93,10 @@ class ImagesDataResponse(BaseModel):
     images: list[ImageDataResponse]
 
 
+class SessionCancelled(Exception):
+    pass
+
+
 @dataclass
 class SessionMeta:
     session_id: str
@@ -110,6 +115,9 @@ class SessionMeta:
     error_code: str | None = None
     error_message: str | None = None
     traceback_tail: str | None = None
+    recovered_pages: int = 0
+    preserved_low_confidence_pages: int = 0
+    skipped_pages: int = 0
     assets: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -413,22 +421,44 @@ async def delete_session(session_id: str) -> dict[str, str]:
     temp_dir = Path(TEMP_DIR).resolve()
     if not session_dir.exists() or temp_dir not in session_dir.parents:
         raise HTTPException(status_code=404, detail="Session not found.")
-    shutil.rmtree(session_dir)
-    return {"session_id": session_id, "message": "Session deleted successfully."}
+    cancelled_sessions.add(session_id)
+    removed_from_queue = _drop_queued_session(session_id)
+    was_active = session_id in active_sessions
+    if session_dir.exists():
+        shutil.rmtree(session_dir)
+    if not was_active:
+        cancelled_sessions.discard(session_id)
+    message = "Session cancellation requested." if was_active else "Session deleted successfully."
+    return {
+        "session_id": session_id,
+        "status": "cancelled",
+        "queue_removed": str(removed_from_queue),
+        "message": message,
+    }
 
 
 async def _worker_loop() -> None:
     while True:
         _priority, _queued_at, session_id = await task_queue.get()
+        if _is_cancelled(session_id):
+            _remove_session_dir(session_id)
+            cancelled_sessions.discard(session_id)
+            task_queue.task_done()
+            continue
         active_sessions.add(session_id)
         try:
             await _process_session(session_id)
         finally:
             active_sessions.discard(session_id)
+            if _is_cancelled(session_id):
+                _remove_session_dir(session_id)
+                cancelled_sessions.discard(session_id)
             task_queue.task_done()
 
 
 async def _process_session(session_id: str) -> None:
+    if _is_cancelled(session_id):
+        raise SessionCancelled
     meta = _read_meta(session_id)
     started = time.time()
     meta.status = "running"
@@ -437,6 +467,8 @@ async def _process_session(session_id: str) -> None:
     meta.started_at = _now_iso()
     _write_meta(meta)
     try:
+        if _is_cancelled(session_id):
+            raise SessionCancelled
         pdf_path = _session_dir(session_id) / meta.filename
         meta.stage = "inferring"
         meta.progress = 30
@@ -446,9 +478,16 @@ async def _process_session(session_id: str) -> None:
             str(_output_dir(session_id)),
             timeout_seconds=GENERATE_TIMEOUT_SECONDS,
         )
+        if _is_cancelled(session_id):
+            raise SessionCancelled
         meta.stage = "post_processing"
         meta.progress = 90
         meta.page_count = int(result.get("page_count") or 0)
+        meta.recovered_pages = int(result.get("recovered_pages") or 0)
+        meta.preserved_low_confidence_pages = int(
+            result.get("preserved_low_confidence_pages") or 0
+        )
+        meta.skipped_pages = int(result.get("skipped_pages") or 0)
         meta.assets = list(result.get("assets") or [])
         _write_meta(meta)
         meta.status = "completed"
@@ -457,7 +496,12 @@ async def _process_session(session_id: str) -> None:
         meta.elapsed_ms = int((time.time() - started) * 1000)
         _write_meta(meta)
         await _send_callback(meta)
+    except SessionCancelled:
+        _remove_session_dir(session_id)
     except Exception as exc:
+        if _is_cancelled(session_id):
+            _remove_session_dir(session_id)
+            return
         meta.status = "failed"
         meta.error_code = exc.__class__.__name__
         meta.error_message = str(exc)
@@ -490,6 +534,36 @@ def _validate_pdf(file: UploadFile, content: bytes) -> None:
         raise HTTPException(status_code=400, detail="Invalid file magic. PDF header is required.")
 
 
+def _is_cancelled(session_id: str) -> bool:
+    return session_id in cancelled_sessions
+
+
+def _drop_queued_session(session_id: str) -> int:
+    removed = 0
+    retained: list[tuple[int, float, str]] = []
+    while True:
+        try:
+            item = task_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+        if item[2] == session_id:
+            removed += 1
+            task_queue.task_done()
+            continue
+        task_queue.task_done()
+        retained.append(item)
+    for item in retained:
+        task_queue.put_nowait(item)
+    return removed
+
+
+def _remove_session_dir(session_id: str) -> None:
+    session_dir = _session_dir(session_id).resolve()
+    temp_dir = Path(TEMP_DIR).resolve()
+    if temp_dir in session_dir.parents:
+        shutil.rmtree(session_dir, ignore_errors=True)
+
+
 async def _send_callback(meta: SessionMeta) -> None:
     if not meta.callback_url:
         return
@@ -501,6 +575,9 @@ async def _send_callback(meta: SessionMeta) -> None:
         "stage": meta.stage,
         "progress": meta.progress,
         "page_count": meta.page_count,
+        "recovered_pages": meta.recovered_pages,
+        "preserved_low_confidence_pages": meta.preserved_low_confidence_pages,
+        "skipped_pages": meta.skipped_pages,
         "uploaded_at": meta.uploaded_at,
         "started_at": meta.started_at,
         "updated_at": meta.updated_at,

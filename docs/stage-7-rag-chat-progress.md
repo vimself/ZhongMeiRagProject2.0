@@ -44,7 +44,7 @@ DashScope 流式生成、无命中兜底、会话历史、引用预览 token 重
 
 ```json
 {
-  "kb_id": "<uuid>",
+  "kb_id": "<uuid 或 __all__>",
   "question": "施工现场临时用电如何设置？",
   "session_id": null,
   "k": 6
@@ -80,6 +80,11 @@ DashScope 流式生成、无命中兜底、会话历史、引用预览 token 重
    }
    ```
 6. 任意环节失败 → `event: error` `{ "message": "…" }`。
+
+`kb_id="__all__"` 为前端“全部知识库”虚拟选项，后端会解析为当前用户可访问的全部启用知识库：
+管理员包含所有启用知识库，普通用户仅包含授予 `viewer/editor/owner` 权限的知识库。
+跨库问答会话的 `knowledge_base_id` 存为 `null`，引用仍保留各自真实
+`knowledge_base_id`。
 
 `ChatCitation` 字段（12 项）：
 
@@ -145,7 +150,11 @@ bbox{x,y,width,height}, snippet, score, preview_url, download_url
 - 状态管理：`stores/chat.ts`（Pinia），含
   `sessions/activeSessionId/activeKbId/messages/latestReferences/
   streaming/error/abortController`。`sendQuestion` 通过
-  `@microsoft/fetch-event-source` 打开 SSE，支持 `stop` 中断。
+  `@microsoft/fetch-event-source` 打开 SSE，支持 `stop` 中断；前端以
+  `done` / `error` SSE 事件作为业务终态，收到后立即释放 `streaming`
+  生成锁并主动中断当前 SSE，避免浏览器连接未及时收尾导致无法新建对话或继续提问。
+- 知识库下拉包含“全部知识库”选项，发送 `kb_id="__all__"`，用于把当前用户
+  可访问的所有启用知识库纳入同一次 RAG 检索与回答。
 - 视觉语言：白色/off-white 背景（`#FAFAF9` / `#FFFFFF`）、细灰边框
   `#E5E7EB`、主色 `#0F766E`（teal）、文字 `#111827`/`#6B7280`、
   克制阴影、不使用紫色 AI 渐变，移动端 `<880px` 退化为单列，
@@ -197,6 +206,15 @@ CHAT_NO_HIT_MESSAGE=无法在知识库中找到依据，建议换个问法或先
   `knowledge_chunks_v2` 已存在 `kcv_vec_native`、`kcv_sparse_native`、
   `kcv_content_ngram`。
 - 前端构建产物 `dist/assets/ChatView-*.js ~149.61 kB`（gzip ~63.29 kB）。
+- 2026-05-14 `/chat` 生成锁修复：Docker 日志确认后端
+  `/api/v2/chat/stream` 已返回 200 且输出完整响应，问题定位为前端等待
+  `fetchEventSource()` 完全结束后才释放全局 `streaming`。已改为收到
+  `done` / `error` 事件即释放锁，并通过 `AbortController` 身份校验避免旧请求
+  影响新请求；`npm run build` 通过。
+- 2026-05-14 `/chat` 全部知识库问答：新增 `kb_id="__all__"` 范围解析、
+  Retriever 多知识库过滤、前端“全部知识库”虚拟选项；新增跨库召回 API/Graph
+  测试，`docker compose exec -T -e APP_ENV=test -e DATABASE_URL=sqlite+aiosqlite:////tmp/chat_all_kb_test_new.db api python -m pytest tests/test_chat_graph.py tests/test_chat_api.py -q`
+  通过（24 passed）。
 
 ## 评测目标与 Runbook
 

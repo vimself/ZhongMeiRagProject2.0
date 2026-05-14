@@ -11,6 +11,8 @@ import {
   streamChat,
 } from '@/api/chat'
 
+export const ALL_KNOWLEDGE_BASES_ID = '__all__'
+
 export interface LocalChatMessage extends Omit<ChatMessageDTO, 'citations'> {
   citations: ChatCitation[]
   /** 'streaming' | 'done' | 'error' */
@@ -92,7 +94,7 @@ export const useChatStore = defineStore('chat', {
       try {
         const resp = await getChatSession(sessionId)
         this.activeSessionId = sessionId
-        this.activeKbId = resp.data.knowledge_base_id ?? this.activeKbId
+        this.activeKbId = resp.data.knowledge_base_id ?? ALL_KNOWLEDGE_BASES_ID
         this.messages = resp.data.messages.map((m) => {
           const citations = shouldExposeCitations(m) ? (m.citations ?? []) : []
           return {
@@ -162,9 +164,15 @@ export const useChatStore = defineStore('chat', {
       this.latestReferences = []
       const assistantId = assistantMsg.id
       let pendingReferences: ChatCitation[] = []
+      let terminalReceived = false
       const updateAssistant = (updater: (msg: LocalChatMessage) => void) => {
         const target = this.messages.find((m) => m.id === assistantId)
         if (target) updater(target)
+      }
+      const releaseStreamingLock = () => {
+        if (this.abortController !== abort) return
+        this.streaming = false
+        this.abortController = null
       }
       this.streaming = true
       try {
@@ -197,6 +205,7 @@ export const useChatStore = defineStore('chat', {
               })
             },
             onDone: (payload: ChatStreamDoneEvent) => {
+              terminalReceived = true
               const target = this.messages.find((m) => m.id === assistantId)
               const shouldShowReferences =
                 pendingReferences.length > 0 &&
@@ -214,35 +223,58 @@ export const useChatStore = defineStore('chat', {
                 msg.citations = shouldShowReferences ? pendingReferences : []
               })
               this.latestReferences = shouldShowReferences ? pendingReferences : []
+              releaseStreamingLock()
+              abort.abort()
             },
             onError: (message) => {
+              terminalReceived = true
               updateAssistant((msg) => {
                 msg.status = 'error'
                 msg.error = message
                 msg.citations = []
+                msg.progressText = ''
               })
               this.latestReferences = []
               this.error = message
+              releaseStreamingLock()
+              abort.abort()
             },
           },
         )
       } catch (err) {
+        if (terminalReceived) return
         const message = (err as Error).message || '网络错误'
         updateAssistant((msg) => {
           msg.status = 'error'
           msg.error = message
           msg.citations = []
+          msg.progressText = ''
         })
         this.latestReferences = []
         this.error = message
       } finally {
-        this.streaming = false
-        this.abortController = null
+        releaseStreamingLock()
       }
     },
     stop() {
-      this.abortController?.abort()
-      this.streaming = false
+      const controller = this.abortController
+      controller?.abort()
+      if (this.abortController === controller) {
+        this.streaming = false
+        this.abortController = null
+      }
+      const streamingAssistant = [...this.messages]
+        .reverse()
+        .find((m) => m.role === 'assistant' && m.status === 'streaming')
+      if (!streamingAssistant) return
+      streamingAssistant.finish_reason = 'cancelled'
+      streamingAssistant.progressText = ''
+      if (streamingAssistant.content) {
+        streamingAssistant.status = 'done'
+        return
+      }
+      streamingAssistant.status = 'error'
+      streamingAssistant.error = '已停止生成'
     },
   },
 })

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -10,9 +11,26 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from app.core.config import get_settings
 from app.services.ocr.exceptions import OCRFailed, OCRTimeout, OCRTransient
 
+TRANSIENT_FAILURE_MARKERS = (
+    "healthwatchdog",
+    "service at",
+    "no longer available",
+    "connection refused",
+    "failed to establish a new connection",
+    "max retries exceeded",
+    "internal server error",
+    "enginecore encountered",
+    "enginedeaderror",
+    "cuda error",
+    "device-side assert",
+)
 
-class DeepSeekOCRClient:
-    """兼容新版和旧版 DeepSeek-OCR API 的异步客户端。"""
+
+class GlmOCRClient:
+    """GLM-OCR 自托管解析服务客户端。
+
+    服务端保持既有上传、轮询、下载 HTTP 协议，便于入库链路无缝替换。
+    """
 
     def __init__(
         self,
@@ -28,7 +46,7 @@ class DeepSeekOCRClient:
             timeout=timeout or httpx.Timeout(connect=10.0, read=120.0, write=120.0, pool=10.0),
         )
 
-    async def __aenter__(self) -> DeepSeekOCRClient:
+    async def __aenter__(self) -> GlmOCRClient:
         return self
 
     async def __aexit__(self, *_exc: object) -> None:
@@ -94,22 +112,27 @@ class DeepSeekOCRClient:
         *,
         interval_seconds: float | None = None,
         timeout_seconds: float | None = None,
+        cancel_checker: Callable[[], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
         settings = get_settings()
         interval = interval_seconds or settings.ocr_poll_interval_seconds
         timeout = timeout_seconds or settings.ocr_max_poll_minutes * 60
         start = asyncio.get_running_loop().time()
         while True:
+            if cancel_checker is not None:
+                await cancel_checker()
             status_payload = await self.get_status(session_id)
             status_text = self._status_text(status_payload)
             if status_text in {"completed", "done", "succeeded", "ready"}:
                 return status_payload
             if status_text.startswith("failed") or status_text in {"dead", "error"}:
                 message = status_payload.get("error_message") or status_payload.get("detail")
+                if self._is_transient_failure_message(message):
+                    raise OCRTransient(str(message or status_text))
                 raise OCRFailed(str(message or status_text))
             if asyncio.get_running_loop().time() - start >= timeout:
                 raise OCRTimeout(f"OCR 会话 {session_id} 超过 {int(timeout)} 秒仍未完成")
-            await asyncio.sleep(interval)
+            await self._sleep_with_cancel_check(interval, cancel_checker)
 
     async def fetch_markdown(
         self,
@@ -135,6 +158,16 @@ class DeepSeekOCRClient:
             return dict(body)
         return {"session_id": session_id, "images": []}
 
+    async def fetch_layout(self, session_id: str) -> dict[str, Any]:
+        response = await self._client.get(f"/result/{session_id}/json")
+        if response.status_code == 404:
+            return {"session_id": session_id, "layout": []}
+        self._raise_for_ocr_error(response)
+        body = response.json()
+        if isinstance(body, dict):
+            return body
+        return {"session_id": session_id, "layout": []}
+
     async def delete_session(self, session_id: str) -> bool:
         response = await self._client.delete(f"/session/{session_id}")
         if response.status_code == 404:
@@ -158,3 +191,26 @@ class DeepSeekOCRClient:
         if payload.get("is_failed") is True:
             return "failed"
         return "processing"
+
+    def _is_transient_failure_message(self, message: Any) -> bool:
+        if not isinstance(message, str):
+            return False
+        normalized = message.casefold()
+        return any(marker in normalized for marker in TRANSIENT_FAILURE_MARKERS)
+
+    async def _sleep_with_cancel_check(
+        self,
+        interval: float,
+        cancel_checker: Callable[[], Awaitable[None]] | None,
+    ) -> None:
+        if cancel_checker is None:
+            await asyncio.sleep(interval)
+            return
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + interval
+        while True:
+            await cancel_checker()
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(min(1.0, remaining))

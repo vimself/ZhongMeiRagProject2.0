@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 class ChatStreamRequest(BaseModel):
     session_id: str | None = None
-    kb_id: str = Field(..., description="目标知识库 ID")
+    kb_id: str = Field(..., description="目标知识库 ID；传 __all__ 表示当前用户可访问的全部知识库")
     question: str = Field(..., min_length=1, max_length=4000)
     filters: dict[str, Any] | None = None
     k: int | None = Field(default=None, ge=1, le=20)

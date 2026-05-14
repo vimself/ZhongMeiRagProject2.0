@@ -39,8 +39,8 @@ class Settings(BaseSettings):
     dashscope_embedding_model: str = "qwen3-vl-embedding"
     dashscope_embedding_dimension: int = 1024
     dashscope_rerank_model: str = "qwen3-rerank"
-    ocr_base_url: str = "http://222.195.4.65:8899"
-    ocr_workstation_host: str = "222.195.4.65"
+    ocr_base_url: str = "http://127.0.0.1:8899"
+    ocr_workstation_host: str = "127.0.0.1"
     ocr_callback_base_url: str = "http://127.0.0.1:18000"
     ocr_callback_token: SecretStr | None = None
     ocr_poll_interval_seconds: float = 5.0
@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     upload_dir: str = "uploads/documents"
     upload_max_mb: int = 200
     upload_max_files: int = 50
+    ingest_receipt_inline_max_bytes: int = 262144
+    ingest_page_index_text_max_bytes: int = 49152
     embed_batch_size: int = 25
     chunk_tokens: int = 512
     chunk_overlap: int = 64

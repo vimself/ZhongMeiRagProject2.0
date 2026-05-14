@@ -8,6 +8,8 @@ import type {
   IngestJobProgress,
 } from '@/api/types'
 
+const DOCUMENT_UPLOAD_TIMEOUT_MS = 3_600_000
+
 export function uploadDocument(
   kbId: string,
   payload: {
@@ -29,7 +31,7 @@ export function uploadDocument(
   }
   return apiClient.post<DocumentUploadResponse>(`/knowledge-bases/${kbId}/documents`, form, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 300_000,
+    timeout: DOCUMENT_UPLOAD_TIMEOUT_MS,
     onUploadProgress(event) {
       if (!onUploadProgress || !event.total) return
       onUploadProgress(Math.round((event.loaded / event.total) * 100))
@@ -56,7 +58,7 @@ export function uploadDocuments(
   }
   return apiClient.post<DocumentUploadResponse>(`/knowledge-bases/${kbId}/documents`, form, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 300_000,
+    timeout: DOCUMENT_UPLOAD_TIMEOUT_MS,
     onUploadProgress(event) {
       if (!onUploadProgress || !event.total) return
       onUploadProgress(Math.round((event.loaded / event.total) * 100))

@@ -38,6 +38,7 @@ from config import (  # noqa: E402
     CROP_MODE,
     GENERATE_TIMEOUT_SECONDS,
     GPU_MEMORY_UTILIZATION,
+    INCOMPLETE_PAGE_MIN_CHARS,
     IMAGE_CROP_MIN_HEIGHT,
     IMAGE_CROP_MIN_INK_RATIO,
     IMAGE_CROP_MIN_WIDTH,
@@ -45,6 +46,12 @@ from config import (  # noqa: E402
     MAX_CONCURRENCY,
     MODEL_PATH,
     NUM_WORKERS,
+    PAGE_RECOVERY_ENABLED,
+    PAGE_RECOVERY_MAX_FAILED_SEGMENTS,
+    PAGE_RECOVERY_MAX_PAGES,
+    PAGE_RECOVERY_MIN_SCORE,
+    PAGE_RECOVERY_OVERLAP_RATIO,
+    PAGE_RECOVERY_SEGMENTS,
     PDF_RENDER_DPI,
     PROMPT,
     REPEAT_NGRAM_SIZE,
@@ -145,6 +152,7 @@ sampling_params = SamplingParams(
     skip_special_tokens=False,
     include_stop_str_in_output=True,
 )
+EOS_TOKEN = "<｜end▁of▁sentence｜>"
 
 
 class PDFOCRProcessor:
@@ -249,10 +257,30 @@ class PDFOCRProcessor:
         return text.replace("\n\n\n\n", "\n\n").replace("\n\n\n", "\n\n")
 
     def is_usable_incomplete_content(self, text: str) -> bool:
+        return self.content_quality_score(text) >= PAGE_RECOVERY_MIN_SCORE
+
+    def content_quality_score(self, text: str) -> int:
         normalized = re.sub(r"\s+", "", text)
-        if len(normalized) < 20:
-            return False
-        return text == self.trim_repetitive_numbered_headings(text)
+        if len(normalized) < INCOMPLETE_PAGE_MIN_CHARS:
+            return 0
+        lines = [re.sub(r"\s+", "", line) for line in text.splitlines() if line.strip()]
+        informative_lines = [line for line in lines if len(line) >= 8]
+        unique_ratio = len(set(lines)) / max(1, len(lines))
+        signal_ratio = (
+            len(re.findall(r"[\u4e00-\u9fffA-Za-z0-9]", normalized)) / max(1, len(normalized))
+        )
+        score = 0
+        if len(normalized) >= 40:
+            score += 2
+        elif len(normalized) >= INCOMPLETE_PAGE_MIN_CHARS:
+            score += 1
+        if len(informative_lines) >= 2:
+            score += 1
+        if unique_ratio >= 0.6:
+            score += 1
+        if signal_ratio >= 0.5:
+            score += 1
+        return score
 
     def detect_graphic_region(self, image: Image.Image) -> tuple[Image.Image, dict[str, float]] | None:
         if cv2 is None:
@@ -464,6 +492,85 @@ class PDFOCRProcessor:
             },
         }
 
+    def run_single_page_ocr(self, image: Image.Image) -> tuple[str, bool]:
+        output = llm.generate([self.process_single_image(image)], sampling_params=sampling_params)[0]
+        content = output.outputs[0].text
+        is_finished = EOS_TOKEN in content
+        if is_finished:
+            content = content.replace(EOS_TOKEN, "")
+        return content, is_finished
+
+    def cleanup_generated_content(
+        self,
+        content: str,
+        *,
+        matches_images: list[str] | None = None,
+        matches_other: list[str] | None = None,
+        fallback_image_names: list[str] | None = None,
+    ) -> str:
+        if matches_images is None or matches_other is None:
+            _matches_ref, matches_images, matches_other = self.re_match(content)
+        for match_image in matches_images:
+            content = content.replace(match_image, "")
+        for match_other in matches_other:
+            content = content.replace(match_other, "")
+        content = content.replace("\\coloneqq", ":=")
+        content = content.replace("\\eqqcolon", "=:")
+        content = self.strip_grounding_fragments(content)
+        content = self.insert_image_links(content, fallback_image_names or [])
+        return self.sanitize_markdown_content(content)
+
+    def split_page_for_recovery(
+        self,
+        image: Image.Image,
+        *,
+        segments: int,
+        overlap_ratio: float = PAGE_RECOVERY_OVERLAP_RATIO,
+    ) -> list[Image.Image]:
+        width, height = image.size
+        if segments <= 1 or height < IMAGE_CROP_MIN_HEIGHT * 2:
+            return [image]
+        overlap = max(16, int(height * overlap_ratio / max(1, segments)))
+        page_segments: list[Image.Image] = []
+        for idx in range(segments):
+            start_y = 0 if idx == 0 else max(0, int(height * idx / segments) - overlap)
+            end_y = (
+                height
+                if idx == segments - 1
+                else min(height, int(height * (idx + 1) / segments) + overlap)
+            )
+            page_segments.append(image.crop((0, start_y, width, end_y)))
+        return page_segments
+
+    def recover_incomplete_page(self, image: Image.Image, page_no: int) -> tuple[str, int, int]:
+        segment_count = max(2, PAGE_RECOVERY_SEGMENTS)
+        max_failed_segments = max(0, PAGE_RECOVERY_MAX_FAILED_SEGMENTS)
+        segments = self.split_page_for_recovery(image, segments=segment_count)
+        recovered_parts: list[str] = []
+        completed_segments = 0
+        failed_segments = 0
+        for segment_idx, segment in enumerate(segments):
+            segment_content, segment_finished = self.run_single_page_ocr(segment)
+            if not segment_finished:
+                failed_segments += 1
+                print(
+                    f"Retry segment {page_no + 1}.{segment_idx + 1}: OCR generation still reached max tokens without EOS.",
+                    flush=True,
+                )
+            cleaned_segment = self.cleanup_generated_content(segment_content)
+            if cleaned_segment.strip():
+                recovered_parts.append(cleaned_segment)
+            if segment_finished:
+                completed_segments += 1
+            elif failed_segments >= max_failed_segments:
+                print(
+                    f"Stopping segmented retry for page {page_no + 1}: {failed_segments} segment(s) still hit max tokens.",
+                    flush=True,
+                )
+                break
+        recovered = self.sanitize_markdown_content("\n\n".join(recovered_parts))
+        return recovered, completed_segments, len(segments)
+
     def pil_to_pdf_img2pdf(self, pil_images: list[Image.Image], output_path: str) -> None:
         if not pil_images:
             return
@@ -516,11 +623,15 @@ class PDFOCRProcessor:
         contents = ""
         draw_images: list[Image.Image] = []
         assets: list[dict[str, Any]] = []
+        recovered_pages = 0
+        recovery_attempted_pages = 0
+        preserved_low_confidence_pages = 0
+        skipped_pages = 0
         for (page_no, img), output in zip(page_images, outputs_list, strict=True):
             content = output.outputs[0].text
-            is_finished = "<｜end▁of▁sentence｜>" in content
+            is_finished = EOS_TOKEN in content
             if is_finished:
-                content = content.replace("<｜end▁of▁sentence｜>", "")
+                content = content.replace(EOS_TOKEN, "")
             elif SKIP_REPEAT:
                 print(
                     f"Sanitizing page {page_no + 1}: OCR generation reached max tokens without EOS.",
@@ -548,21 +659,63 @@ class PDFOCRProcessor:
             for match_image, image_name in image_replacements:
                 replacement = f"![](images/{image_name})\n" if image_name else ""
                 content = content.replace(match_image, replacement, 1)
-            for match_image in matches_images:
-                content = content.replace(match_image, "")
-            for match_other in matches_other:
-                content = content.replace(match_other, "")
-                content = content.replace("\\coloneqq", ":=")
-                content = content.replace("\\eqqcolon", "=:")
-            content = self.strip_grounding_fragments(content)
-            content = self.insert_image_links(content, fallback_image_names)
-            content = self.sanitize_markdown_content(content)
-            if not is_finished and SKIP_REPEAT and not self.is_usable_incomplete_content(content):
-                print(
-                    f"Skipping page {page_no + 1}: sanitized incomplete OCR content is still low quality.",
-                    flush=True,
-                )
-                continue
+            content = self.cleanup_generated_content(
+                content,
+                matches_images=matches_images,
+                matches_other=matches_other,
+                fallback_image_names=fallback_image_names,
+            )
+            if not is_finished and SKIP_REPEAT:
+                original_score = self.content_quality_score(content)
+                if original_score >= PAGE_RECOVERY_MIN_SCORE:
+                    preserved_low_confidence_pages += 1
+                    print(
+                        f"Preserving page {page_no + 1}: incomplete OCR content is usable; segmented retry skipped.",
+                        flush=True,
+                    )
+                else:
+                    recovery_allowed = PAGE_RECOVERY_ENABLED and recovery_attempted_pages < max(
+                        0, PAGE_RECOVERY_MAX_PAGES
+                    )
+                    if recovery_allowed:
+                        recovery_attempted_pages += 1
+                        (
+                            recovered_content,
+                            completed_segments,
+                            total_segments,
+                        ) = self.recover_incomplete_page(img, page_no)
+                        recovered_score = self.content_quality_score(recovered_content)
+                        if recovered_content and (
+                            recovered_score > original_score
+                            or len(re.sub(r"\s+", "", recovered_content))
+                            > len(re.sub(r"\s+", "", content))
+                        ):
+                            content = recovered_content
+                            original_score = recovered_score
+                            recovered_pages += 1
+                            print(
+                                f"Recovered page {page_no + 1} with segmented retry ({completed_segments}/{total_segments} segments finished).",
+                                flush=True,
+                            )
+                    else:
+                        print(
+                            f"Skipping segmented retry for page {page_no + 1}: recovery budget exhausted or disabled.",
+                            flush=True,
+                        )
+                if original_score < PAGE_RECOVERY_MIN_SCORE:
+                    normalized = re.sub(r"\s+", "", content)
+                    if len(normalized) < INCOMPLETE_PAGE_MIN_CHARS:
+                        print(
+                            f"Skipping page {page_no + 1}: OCR content is still too short after cleanup/recovery.",
+                            flush=True,
+                        )
+                        skipped_pages += 1
+                        continue
+                    preserved_low_confidence_pages += 1
+                    print(
+                        f"Preserving page {page_no + 1}: keeping incomplete OCR content with low confidence.",
+                        flush=True,
+                    )
             contents += content + f"\n{page_split}\n"
         mmd_path = Path(output_dir) / "result.md"
         mmd_det_path = Path(output_dir) / "result_det.md"
@@ -576,6 +729,9 @@ class PDFOCRProcessor:
             "images": [asset["name"] for asset in assets],
             "assets": assets,
             "page_count": len(page_images),
+            "recovered_pages": recovered_pages,
+            "preserved_low_confidence_pages": preserved_low_confidence_pages,
+            "skipped_pages": skipped_pages,
             "output_dir": output_dir,
         }
 

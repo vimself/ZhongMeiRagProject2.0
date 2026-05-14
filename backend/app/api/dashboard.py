@@ -18,7 +18,7 @@ from app.models.chat import ChatMessage, ChatSession
 from app.models.document import Document, DocumentAsset, DocumentIngestJob, KnowledgeChunkV2
 from app.models.knowledge_base import KnowledgeBase
 from app.schemas.search import DashboardStats, SystemStatus
-from app.services.ocr.client import DeepSeekOCRClient
+from app.services.ocr.client import GlmOCRClient
 
 router = APIRouter(prefix="/api/v2/dashboard", tags=["dashboard"])
 AdminUser = Annotated[User, Depends(require_admin)]
@@ -257,7 +257,7 @@ async def _check_ocr() -> dict[str, object]:
     try:
         t0 = time.monotonic()
         timeout = httpx.Timeout(connect=2.0, read=2.0, write=2.0, pool=2.0)
-        async with DeepSeekOCRClient(timeout=timeout) as client:
+        async with GlmOCRClient(timeout=timeout) as client:
             await client.healthz()
         latency = round((time.monotonic() - t0) * 1000, 2)
         return {"status": "ok", "latency_ms": latency}

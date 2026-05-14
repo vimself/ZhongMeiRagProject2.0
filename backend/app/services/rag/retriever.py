@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Sequence
 
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -43,7 +43,7 @@ class Retriever:
     async def retrieve(
         self,
         *,
-        kb_id: str,
+        kb_id: str | Sequence[str],
         query: str,
         k: int = 10,
         filters: dict[str, Any] | None = None,
@@ -151,12 +151,15 @@ class Retriever:
             )
         return await rerank_results(cleaned_query or query, results, top_n=k)
 
-    async def _load_chunks(self, kb_id: str, filters: dict[str, Any]) -> list[KnowledgeChunkV2]:
+    async def _load_chunks(
+        self, kb_id: str | Sequence[str], filters: dict[str, Any]
+    ) -> list[KnowledgeChunkV2]:
+        kb_ids = self._normalize_kb_ids(kb_id)
         query = (
             select(KnowledgeChunkV2)
             .join(Document, Document.id == KnowledgeChunkV2.document_id)
             .where(
-                KnowledgeChunkV2.knowledge_base_id == kb_id,
+                KnowledgeChunkV2.knowledge_base_id.in_(kb_ids),
                 Document.status.notin_(("disabled", DOCUMENT_DELETING_STATUS)),
             )
         )
@@ -214,7 +217,7 @@ class Retriever:
 
     async def _seekdb_vector_search(
         self,
-        kb_id: str,
+        kb_id: str | Sequence[str],
         query_vector: list[float] | None,
         filters: dict[str, Any],
         k: int,
@@ -241,7 +244,7 @@ class Retriever:
 
     async def _seekdb_lexical_search(
         self,
-        kb_id: str,
+        kb_id: str | Sequence[str],
         query: str,
         filters: dict[str, Any],
         k: int,
@@ -262,7 +265,7 @@ class Retriever:
 
     async def _seekdb_bm25_search(
         self,
-        kb_id: str,
+        kb_id: str | Sequence[str],
         query: str,
         filters: dict[str, Any],
         k: int,
@@ -289,7 +292,7 @@ class Retriever:
 
     async def _seekdb_sparse_search(
         self,
-        kb_id: str,
+        kb_id: str | Sequence[str],
         query: str,
         filters: dict[str, Any],
         k: int,
@@ -317,12 +320,22 @@ class Retriever:
         return [(str(row.id), float(row.score)) for row in result if row.score is not None]
 
     @staticmethod
-    def _seekdb_filters(kb_id: str, filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-        clauses = [
-            "c.knowledge_base_id = :kb_id",
-            "d.status NOT IN ('disabled', 'deleting')",
-        ]
-        params: dict[str, Any] = {"kb_id": kb_id}
+    def _seekdb_filters(
+        kb_id: str | Sequence[str], filters: dict[str, Any]
+    ) -> tuple[str, dict[str, Any]]:
+        kb_ids = Retriever._normalize_kb_ids(kb_id)
+        clauses = ["d.status NOT IN ('disabled', 'deleting')"]
+        params: dict[str, Any] = {}
+        if len(kb_ids) == 1:
+            clauses.insert(0, "c.knowledge_base_id = :kb_id")
+            params["kb_id"] = kb_ids[0]
+        else:
+            placeholders: list[str] = []
+            for index, value in enumerate(kb_ids):
+                key = f"kb_id_{index}"
+                placeholders.append(f":{key}")
+                params[key] = value
+            clauses.insert(0, f"c.knowledge_base_id IN ({', '.join(placeholders)})")
         doc_kind = filters.get("doc_kind")
         scheme_type = filters.get("scheme_type")
         if isinstance(doc_kind, str) and doc_kind:
@@ -336,6 +349,13 @@ class Retriever:
             clauses.append("c.content_type = :content_type")
             params["content_type"] = content_type
         return " AND ".join(clauses), params
+
+    @staticmethod
+    def _normalize_kb_ids(kb_id: str | Sequence[str]) -> list[str]:
+        if isinstance(kb_id, str):
+            return [kb_id]
+        ids = [str(item) for item in kb_id if str(item)]
+        return ids or ["__no_accessible_knowledge_base__"]
 
     @staticmethod
     def _vector_literal(values: list[float]) -> str:

@@ -23,8 +23,7 @@ import type { KnowledgeBaseOut } from '@/api/types'
 import CitationPane from '@/features/chat/CitationPane.vue'
 import Composer from '@/features/chat/Composer.vue'
 import MessageList from '@/features/chat/MessageList.vue'
-import PreviewModal from '@/features/chat/PreviewModal.vue'
-import { useChatStore } from '@/stores/chat'
+import { ALL_KNOWLEDGE_BASES_ID, useChatStore } from '@/stores/chat'
 import { formatBeijingDate } from '@/utils/time'
 
 const router = useRouter()
@@ -34,11 +33,10 @@ const chat = useChatStore()
 const kbList = ref<KnowledgeBaseOut[]>([])
 const loadingKb = ref(false)
 const scrollerRef = ref<HTMLDivElement>()
-const previewVisible = ref(false)
-const activeCitation = ref<ChatCitation | null>(null)
 
 const activeKbName = computed(() => {
   if (!chat.activeKbId) return ''
+  if (chat.activeKbId === ALL_KNOWLEDGE_BASES_ID) return '全部知识库'
   return kbList.value.find((k) => k.id === chat.activeKbId)?.name || ''
 })
 
@@ -46,7 +44,11 @@ const hasEvidence = computed(() => chat.latestReferences.length > 0)
 
 const emptyHint = computed(() => {
   if (!chat.activeKbId) return '请先选择左上角的知识库，再开始提问。'
-  if (chat.messages.length === 0) return '向当前知识库发起提问，回答完成后会展示可用依据。'
+  if (chat.messages.length === 0) {
+    return chat.activeKbId === ALL_KNOWLEDGE_BASES_ID
+      ? '向全部知识库发起提问，回答完成后会展示可用依据。'
+      : '向当前知识库发起提问，回答完成后会展示可用依据。'
+  }
   return ''
 })
 
@@ -57,7 +59,9 @@ async function loadKnowledgeBases() {
     kbList.value = resp.data.items
     // 若 query 指定 kb_id
     const kbFromQuery = String(route.query.kb_id || '').trim()
-    if (kbFromQuery && kbList.value.some((k) => k.id === kbFromQuery)) {
+    if (kbFromQuery === ALL_KNOWLEDGE_BASES_ID) {
+      chat.setKb(ALL_KNOWLEDGE_BASES_ID)
+    } else if (kbFromQuery && kbList.value.some((k) => k.id === kbFromQuery)) {
       chat.setKb(kbFromQuery)
     } else if (!chat.activeKbId && kbList.value.length > 0) {
       chat.setKb(kbList.value[0].id)
@@ -118,9 +122,32 @@ async function handleSubmit(question: string) {
   await chat.fetchSessions()
 }
 
-async function openCitation(citation: ChatCitation) {
-  activeCitation.value = citation
-  previewVisible.value = true
+function bboxFragment(citation: ChatCitation): string {
+  const bbox = citation.bbox
+  if (!bbox) return ''
+  const values = [bbox.x, bbox.y, bbox.width, bbox.height]
+  if (!values.every((value) => typeof value === 'number')) return ''
+  return values.join(',')
+}
+
+function citationPreviewUrl(citation: ChatCitation): string {
+  const page = citation.page_start ?? 1
+  const baseUrl = (citation.preview_url || '').split('#')[0]
+  const bbox = bboxFragment(citation)
+  return `${baseUrl}#page=${page}${bbox ? `&bbox=${bbox}` : ''}`
+}
+
+function openCitation(citation: ChatCitation) {
+  if (!citation.preview_url) {
+    ElMessage.warning('该引用没有可用的 PDF 预览链接')
+    return
+  }
+  const preview = window.open(citationPreviewUrl(citation), '_blank')
+  if (!preview) {
+    ElMessage.warning('浏览器阻止了新页面打开，请允许弹窗后重试')
+    return
+  }
+  preview.opener = null
 }
 
 watch(
@@ -163,6 +190,7 @@ onMounted(async () => {
           class="chat-sidebar__select"
           @change="handleKbChange"
         >
+          <ElOption label="全部知识库" :value="ALL_KNOWLEDGE_BASES_ID" />
           <ElOption v-for="kb in kbList" :key="kb.id" :label="kb.name" :value="kb.id" />
         </ElSelect>
       </section>
@@ -265,8 +293,6 @@ onMounted(async () => {
       :loading="false"
       @open="openCitation"
     />
-
-    <PreviewModal v-model="previewVisible" :citation="activeCitation" />
   </div>
 </template>
 

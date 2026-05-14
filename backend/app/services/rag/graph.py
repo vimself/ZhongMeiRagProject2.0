@@ -40,6 +40,7 @@ class RagState:
     kb_id: str
     raw_query: str
     user_id: str
+    kb_ids: list[str] = field(default_factory=list)
     filters: dict[str, Any] = field(default_factory=dict)
     history: list[dict[str, str]] = field(default_factory=list)
     k: int = 6
@@ -141,15 +142,16 @@ async def retrieve_track_a(
     query_vector: list[float] | None,
 ) -> RagState:
     """向量召回。直接复用 Retriever 的 fallback 实现，单测在 SQLite 下稳定。"""
+    kb_scope = state.kb_ids or [state.kb_id]
     if query_vector and retriever._can_use_seekdb_native():  # noqa: SLF001
         try:
             state.track_a = await retriever._seekdb_vector_search(  # noqa: SLF001
-                state.kb_id, query_vector, state.filters, k=state.k * 2
+                kb_scope, query_vector, state.filters, k=state.k * 2
             )
             return state
         except Exception:
             state.track_a = []
-    chunks = await retriever._load_chunks(state.kb_id, state.filters)  # noqa: SLF001
+    chunks = await retriever._load_chunks(kb_scope, state.filters)  # noqa: SLF001
     if not chunks:
         state.track_a = []
         return state
@@ -180,10 +182,11 @@ async def retrieve_track_a(
 
 async def retrieve_track_b(state: RagState, retriever: Retriever) -> RagState:
     """页级 BM25 / 词频召回。"""
+    kb_scope = state.kb_ids or [state.kb_id]
     if retriever._can_use_seekdb_native():  # noqa: SLF001
         try:
             state.track_b = await retriever._seekdb_lexical_search(  # noqa: SLF001
-                state.kb_id,
+                kb_scope,
                 state.planned_query or state.raw_query,
                 state.filters,
                 k=state.k * 2,
@@ -191,7 +194,7 @@ async def retrieve_track_b(state: RagState, retriever: Retriever) -> RagState:
             return state
         except Exception:
             state.track_b = []
-    chunks = await retriever._load_chunks(state.kb_id, state.filters)  # noqa: SLF001
+    chunks = await retriever._load_chunks(kb_scope, state.filters)  # noqa: SLF001
     state.track_b = retriever._bm25_search(  # noqa: SLF001
         chunks, state.planned_query or state.raw_query, k=state.k * 2
     )
@@ -504,6 +507,7 @@ async def prepare_citations(
     db: AsyncSession,
     *,
     kb_id: str,
+    kb_ids: list[str] | None = None,
     user_id: str,
     query: str,
     filters: dict[str, Any] | None = None,
@@ -517,6 +521,7 @@ async def prepare_citations(
         kb_id=kb_id,
         raw_query=query,
         user_id=user_id,
+        kb_ids=kb_ids or [kb_id],
         filters=filters or {},
         history=history or [],
         k=k or settings.chat_topk,

@@ -34,6 +34,7 @@ Thumbs.db
 
 # Runtime data
 storage/
+data/
 uploads/
 backend/uploads/
 logs/

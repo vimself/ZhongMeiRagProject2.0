@@ -12,7 +12,7 @@
 >
 > - **LLM**：阿里 DashScope `qwen3.6-plus`（兼容 OpenAI 协议）
 > - **Embedding**：阿里 DashScope `qwen3-vl-embedding`（多模态，1024 维）
-> - **PDF/OCR**：自托管 DeepSeek-OCR-2（校园网工作站 `222.195.4.65:8899`，通过 SSH 反向隧道连接）
+> - **PDF/OCR**：自托管 GLM-OCR（`GlmOcrApi/`，vLLM `127.0.0.1:18080` + 兼容 OCR API `:8899`），基于官方 self-hosted pipeline 输出 Markdown + 图片集 + JSON 版面信息
 > - **Agent**：LangGraph（全链路）
 > - **数据层**：**SeekDB 单库**（关系 + 向量 + 稀疏全文索引一体化）
 > - **方案文档生成**：**python-docx + docxtpl + 甲方 `custom-reference.docx` 模板直写**（摒弃 Markdown → Quarto → docx）
@@ -66,7 +66,7 @@ frontend/src/
 │   ├── CitationCard.vue     # 引用气泡：文档名·章节·第N页 + [预览] 按钮
 │   └── ...
 ├── features/
-│   ├── chat/                # MessageList / Composer / CitationPane / PreviewModal
+│   ├── chat/                # MessageList / Composer / CitationPane / CitationCard
 │   ├── knowledge/
 │   ├── plan-assistant/      # 重构：ProjectForm / OutlineEditor / SectionDraft / QAReport / DocxExport
 │   ├── plan-template/       # 新增：模板管理（章节 schema、占位符、表格 schema）
@@ -89,7 +89,7 @@ frontend/src/
 | 速率限制 | **slowapi**（入口）+ **Celery `rate_limit`**（下游）+ Redis token bucket | 三层 |
 | LLM 客户端 | **OpenAI SDK（兼容 DashScope）+ tenacity 重试 + 自建令牌桶** | `qwen3.6-plus` |
 | Embedding | **DashScope 官方 SDK + 批量合并 + Redis 缓存** | `qwen3-vl-embedding` |
-| OCR | **httpx.AsyncClient → 自托管 DeepSeek-OCR-2（校园网工作站 `222.195.4.65:8899`）** | Celery worker 内调用；异步上传-轮询-下载模式 |
+| OCR | **httpx.AsyncClient → 自托管 GLM-OCR API（`GlmOcrApi/`，`:8899`）** | Celery worker 内调用；异步上传-轮询-下载，返回 Markdown、图片、表格/公式元数据和 layout JSON |
 | Agent | **LangGraph 0.3 + RedisSaver** | 节点化 + 多 worker 可恢复 |
 | 数据层 | **SeekDB 单库**（兼容 MySQL 协议 + 原生向量/稀疏列） | 所有关系表 + Track A/B 索引 |
 | DB 驱动 | **SQLAlchemy 2.0 async + asyncmy** + **SeekDB SDK**（向量列） | 关系走 ORM，向量走专用客户端 |
@@ -158,8 +158,9 @@ graph TB
         EMB[qwen3-vl-embedding]
     end
 
-    subgraph Campus["校园网工作站 (222.195.4.65)"]
-        OCR[DeepSeek-OCR-2 :8899]
+    subgraph OcrHost["OCR 工作站 / 本机 GPU"]
+        OCR[GLM-OCR API :8899]
+        VLLM[GLM-OCR vLLM :18080]
     end
 
     UI -->|HTTPS/SSE| NG --> API
@@ -170,6 +171,7 @@ graph TB
     API --> SEEK
     Workers --> SEEK
     Workers --> OCR
+    OCR --> VLLM
     Workers --> EMB
     Workers --> LLM
     API --> LLM
@@ -184,7 +186,7 @@ graph TB
 
 ## 4. 三大核心链路
 
-### 4.1 上传入库链路（DeepSeek-OCR + Celery，强化章节元数据）
+### 4.1 上传入库链路（GLM-OCR + Celery，强化章节元数据）
 
 **同步段（FastAPI）**：
 1. `POST /api/v2/knowledge-bases/{kb_id}/documents`（multipart）
@@ -197,14 +199,14 @@ graph TB
 **异步段（Celery `ingest` 队列）**：
 ```
 ingest.process （幂等：SELECT ... FOR UPDATE SKIP LOCKED）
-  ├─ 1. upload-to-ocr         → POST 上传 PDF 到自托管 DeepSeek-OCR-2（校园网工作站 222.195.4.65:8899/upload）
-  ├─ 2. poll-and-fetch-ocr    → 轮询 /status/{session_id} → 完成后 GET /result/{session_id}/markdown 获取 markdown + 下载图片
+  ├─ 1. upload-to-ocr         → POST 上传 PDF 到自托管 GLM-OCR API（:8899/upload）
+  ├─ 2. poll-and-fetch-ocr    → 轮询 /status/{session_id} → 完成后获取 markdown、assets 与 /result/{session_id}/json
   ├─ 3. parse-outline         → 解析章节树：从 OCR 标题层级或正则（`第X章 / X.Y / X.Y.Z`）构建章节路径
   ├─ 4. section-aware-chunk   → 按"章节 + 语义 + 长度"三重约束切片，不跨章节
   ├─ 5. embed-batch           → DashScope qwen3-vl-embedding（批量 25）
   ├─ 6. track-a-write         → SeekDB knowledge_chunks_v2（向量 + 稀疏 + section_path + page_start/end + bbox）
   ├─ 7. track-b-write         → SeekDB knowledge_page_index_v2（页级聚合 + section 映射）
-  ├─ 8. asset-register        → 图片/表格/公式落 document_assets（含 bbox、page）
+  ├─ 8. asset-register        → 图片落 document_assets（含 bbox、page），GLM layout JSON 随 parse result 归档
   ├─ 9. finalize              → documents.status=ready
   └─ on_failure               → 指数退避（max=5）→ 死信队列 + 告警
 ```
@@ -243,7 +245,7 @@ ingest.process （幂等：SELECT ... FOR UPDATE SKIP LOCKED）
 
 #### 4.2.2 引用元数据协议（**本次新增重点**）
 
-SSE 事件携带引用结构，前端据此渲染"可点击跳转 PDF 预览"：
+SSE 事件携带引用结构，后端按 `score` 从高到低下发，前端据此渲染"可点击跳转 PDF 预览"：
 
 ```jsonc
 // event: references  （answer 流式输出前 1 次性下发）
@@ -263,7 +265,7 @@ SSE 事件携带引用结构，前端据此渲染"可点击跳转 PDF 预览"：
       "snippet": "洞身开挖采用台阶法…",       // 200 字内摘要
       "chunk_id": "c-19a7",
       "score": 0.87,
-      "preview_url": "/api/v2/pdf/preview?document_id=d-08f3c7&page=37#bbox=82,310,430,56&token=xxx",
+      "preview_url": "/api/v2/pdf/preview?document_id=d-08f3c7&page=37&token=xxx#page=37&bbox=82,310,430,56",
       "download_url": "/api/v2/documents/d-08f3c7/download?token=xxx"
     }
   ]
@@ -275,11 +277,9 @@ SSE 事件携带引用结构，前端据此渲染"可点击跳转 PDF 预览"：
 ```
 
 #### 4.2.3 前端交互
-- **聊天气泡**渲染 `^[1]` 角标，hover 显示 `CitationCard`（文档名·章节路径·页码·摘要）。
-- **点击角标** / **点击"预览"按钮** → 打开 `PreviewModal`（或新标签页）：
-  - 左侧 `<PdfViewer>` 基于 **pdfjs-dist** 跳转到 `page_start`，绘制 `bbox` 矩形高亮（canvas 覆层）。
-  - 右侧同步展示命中 snippet、章节路径、原始问答对。
-  - 支持**翻页、缩放、文字选择复制、关键词再检索**。
+- **聊天气泡**展示答案正文，底部"参考文档"按引用 `score` 降序列出，与右侧"参考文档详情"顺序完全一致。
+- **右侧"参考文档详情"**按相关度从高到低展示 `CitationCard`（文档名·章节路径·页码·摘要）。
+- **点击右侧引用卡片** → 直接打开新的浏览器页面访问 `preview_url`，使用 `/api/v2/pdf/preview?...#page={page_start}` 定位到命中页；文档列表预览同一路由但固定跳转首页 `#page=1`。
 - **PDF 访问安全**：`preview_url` 附带**短时 JWT（5 min）+ knowledge_base 权限校验**；nginx 透传 `Range` 请求以支持 pdf.js 分片加载。
 
 #### 4.2.4 后端 PDF 预览路由
@@ -542,7 +542,7 @@ PyMuPDF == 1.24.*             # 生产用：快、稳
 - HTTP：`http_requests_total / http_request_duration_seconds`
 - Celery：按 queue 成功率 / 重试率 / p95
 - RAG：`rag_first_token_seconds / rag_total_tokens / rag_retrieval_hits / rag_citations_per_answer`
-- 入库：`ingest_step_duration_seconds / ingest_ocr_latency_seconds / ingest_sections_parsed_total`（OCR 指标采集自托管 DeepSeek-OCR-2 服务）
+- 入库：`ingest_step_duration_seconds / ingest_ocr_latency_seconds / ingest_sections_parsed_total`（OCR 指标采集自托管 GLM-OCR 服务）
 - 方案助手：`plan_section_duration_seconds / plan_qa_findings_total{severity} / plan_export_duration_seconds`
 - LLM：`llm_tokens_total / llm_cost_yuan_total / llm_429_total`
 - PDF 预览：`pdf_preview_requests_total / pdf_preview_bytes_total`
@@ -566,7 +566,7 @@ PyMuPDF == 1.24.*             # 生产用：快、稳
 
 ### 8.1 服务清单
 
-> **外部依赖**：校园网工作站 `222.195.4.65:8899` 运行自托管 DeepSeek-OCR-2 服务，通过 SSH 反向隧道（autossh）使本机可访问。代码位于 `DeepseekOcrApi/` 目录。
+> **外部依赖**：GPU 主机运行 `GlmOcrApi/`。该服务启动本地 GLM-OCR vLLM（默认 `127.0.0.1:18080`）和兼容 OCR API（默认 `0.0.0.0:8899`）。Docker worker 通过 `OCR_BASE_URL=http://host.docker.internal:8899` 访问；旧 `DeepseekOcrApi/` 已下线，不再作为入库 OCR 服务。
 
 ```yaml
 services:
@@ -643,7 +643,7 @@ backend/
 │   ├── services/
 │   │   ├── auth / knowledge / chat / rag / ingest / search / dashboard
 │   │   ├── llm/                # DashScope 客户端 + 限流 + 缓存
-│   │   ├── ocr/                # 自托管 DeepSeek-OCR-2 客户端（上传-轮询-下载）
+│   │   ├── ocr/                # 自托管 GLM-OCR 客户端（上传-轮询-下载 + layout JSON）
 │   │   ├── pdf/                # 签名 + 鉴权 + 坐标归一
 │   │   └── plan/
 │   │       ├── project_service.py
@@ -778,17 +778,17 @@ backend/
 
 ### Stage 5 · 入库链路核心（2 周）
 
-**整体目标**：PDF 上传 → DeepSeek-OCR → 章节切片 → 向量 + 结构化索引落 SeekDB。
+**整体目标**：PDF 上传 → GLM-OCR → 章节切片 → 向量 + 结构化索引落 SeekDB。
 
 #### 5.1 数据模型 + DashScope 客户端（2 天）- 最新要求：抛弃旧版本的数据库表设计和所有数据，全部按按照系统架构重新设计，并创建新的数据进行测试
 - 迁移：`documents / document_parse_results / document_assets / document_ingest_jobs / ingest_step_receipts / ingest_callback_receipts / knowledge_chunks_v2 / knowledge_page_index_v2`（含 `section_path/section_id/page_start/page_end/bbox/doc_kind/scheme_type`）。
-- `services/llm/client.py` 统一 DashScope：chat / embedding，带 tenacity + token bucket + 成本统计；`services/ocr/client.py` 封装自托管 DeepSeek-OCR-2（上传-轮询-下载）。
+- `services/llm/client.py` 统一 DashScope：chat / embedding，带 tenacity + token bucket + 成本统计；`services/ocr/client.py` 封装自托管 GLM-OCR（上传-轮询-下载 + layout JSON）。
 - **验收**：单元测试模拟 429 重试成功。
 
 #### 5.2 OCR 调度 + 章节解析（3 天）
 - `tasks/ingest.py`：`upload_to_ocr → fetch_ocr_result → parse_outline`。
 - `services/ingest/outline_parser.py`：从 OCR 标题层级/正则构章节树。
-- Mock OCR Server（本地 httpbin 风格，模拟自托管 DeepSeek-OCR-2 接口）供测试。
+- Mock OCR Server（本地 httpbin 风格，模拟自托管 GLM-OCR 兼容接口）供测试。
 - **验收**：10 篇样本 PDF 章节识别准确率 ≥ 90%。
 
 #### 5.3 章节感知切片 + Embedding 批处理（3 天）
@@ -848,10 +848,10 @@ backend/
 - **验收**：`curl -N` 可流式观察事件；references JSON Schema 校验通过。
 
 #### 7.3 前端聊天 UI + 引用交互（3 天）
-- `features/chat/`：MessageList / Composer / CitationCard / CitationPane / PreviewModal。
-- 使用 `@microsoft/fetch-event-source`；渲染 `^[n]` 角标 + hover 卡片。
-- 点击角标打开 `PreviewModal` 或新 Tab，调 `PdfViewer` 跳转 + 高亮。
-- **验收**：首 token p95 < 3s；点击引用可定位页和高亮区域。
+- `features/chat/`：MessageList / Composer / CitationCard / CitationPane。
+- 使用 `@microsoft/fetch-event-source`；回答底部"参考文档"和右侧详情统一按 `score` 降序展示。
+- 点击右侧引用卡片直接打开新标签页 `/api/v2/pdf/preview?...#page={page_start}`，不再在 `/chat` 内嵌预览窗口。
+- **验收**：首 token p95 < 3s；点击引用可在新页面定位到命中页。
 
 #### 7.4 引用落库与复现（1 天）
 - `chat_message_citations` 表；查看历史会话时重新签发 preview token。
@@ -1010,20 +1010,20 @@ app.conf.update(
 )
 ```
 
-### 11.2 `services/ocr/client.py`（自托管 DeepSeek-OCR-2 客户端）
+### 11.2 `services/ocr/client.py`（自托管 GLM-OCR 客户端）
 ```python
 import httpx
 import asyncio
 
-class DeepSeekOCRClient:
-    """封装 DeepSeek-OCR-2 异步上传-轮询-下载流程"""
+class GlmOCRClient:
+    """封装 GLM-OCR 异步上传-轮询-下载流程"""
 
-    def __init__(self, base_url: str = "http://222.195.4.65:8899"):
+    def __init__(self, base_url: str = "http://127.0.0.1:8899"):
         self.base_url = base_url
         self._client = httpx.AsyncClient(timeout=300)
 
     async def process_pdf(self, pdf_path: str, poll_interval: float = 5.0) -> dict:
-        """上传 PDF → 轮询状态 → 返回 markdown + 图片"""
+        """上传 PDF → 轮询状态 → 返回 markdown + 图片 + layout JSON"""
         # 1. 上传
         with open(pdf_path, "rb") as f:
             resp = await self._client.post(
@@ -1266,4 +1266,4 @@ alembic upgrade head
 ---
 
 > **一句话定义本方案**：
-> *把系统拆成"FastAPI 控制面 + Celery 数据面"，Redis 串联，LangGraph 节点化 Agent；DashScope 的 LLM/Embedding 作为可替换下游，OCR 走校园网工作站自托管 DeepSeek-OCR-2；全量数据（关系+向量+索引）收敛到 SeekDB 单库；RAG 答复每条都带"文档·章节·页·bbox"引用并可跳转 PDF 预览高亮；施工方案走"项目参数结构化 + 章节级 RAG + 多 Agent 协同 + 一致性校验 + Word 模板高保真渲染"路线；在一台 16C/32G Docker 主机上稳定服务 20 人级并发，并为后续水平扩展/云化留足接口。*
+> *把系统拆成"FastAPI 控制面 + Celery 数据面"，Redis 串联，LangGraph 节点化 Agent；DashScope 的 LLM/Embedding 作为可替换下游，OCR 走本机/工作站自托管 GLM-OCR 官方 pipeline；全量数据（关系+向量+索引）收敛到 SeekDB 单库；RAG 答复每条都带"文档·章节·页·bbox"引用并可跳转 PDF 预览高亮；施工方案走"项目参数结构化 + 章节级 RAG + 多 Agent 协同 + 一致性校验 + Word 模板高保真渲染"路线；在一台 16C/32G Docker 主机上稳定服务 20 人级并发，并为后续水平扩展/云化留足接口。*

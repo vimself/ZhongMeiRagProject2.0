@@ -3,10 +3,7 @@ import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import { computed } from 'vue'
 
-import {
-  documentReferenceSummaries,
-  formatDocumentReference,
-} from '@/features/chat/citationDisplay'
+import { formatCitationReference, orderedCitations } from '@/features/chat/citationDisplay'
 import type { LocalChatMessage } from '@/stores/chat'
 
 const props = defineProps<{
@@ -74,7 +71,7 @@ const items = computed(() =>
   props.messages.map((m) => ({
     raw: m,
     html: m.role === 'assistant' ? renderContent(m.content) : '',
-    sources: documentReferenceSummaries(m.citations),
+    sources: orderedCitations(m.citations),
   })),
 )
 </script>
@@ -125,9 +122,9 @@ const items = computed(() =>
             class="answer-sources"
           >
             <div class="answer-sources__head">参考文档</div>
-            <div v-for="source in sources" :key="source.key" class="answer-source">
+            <div v-for="source in sources" :key="source.id" class="answer-source">
               <span class="answer-source__mark" aria-hidden="true" />
-              <span class="answer-source__title">{{ formatDocumentReference(source) }}</span>
+              <span class="answer-source__title">{{ formatCitationReference(source) }}</span>
             </div>
           </div>
 

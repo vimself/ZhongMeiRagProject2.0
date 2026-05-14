@@ -36,6 +36,24 @@ export function citationClause(citation: ChatCitation): string | null {
   return extractLastClause(citation.snippet || '') ?? extractLastClause(citation.section_text || '')
 }
 
+function finiteScore(citation: ChatCitation): number {
+  return Number.isFinite(citation.score) ? citation.score : Number.NEGATIVE_INFINITY
+}
+
+function sourceTieBreaker(a: ChatCitation, b: ChatCitation): number {
+  const titleDiff = sourceLabel(a).localeCompare(sourceLabel(b), 'zh-Hans-CN')
+  if (titleDiff !== 0) return titleDiff
+  return String(a.id).localeCompare(String(b.id), 'zh-Hans-CN')
+}
+
+export function compareCitationsByRelevance(a: ChatCitation, b: ChatCitation): number {
+  const scoreDiff = finiteScore(b) - finiteScore(a)
+  if (scoreDiff !== 0) return scoreDiff
+  const indexDiff = (a.index ?? 0) - (b.index ?? 0)
+  if (indexDiff !== 0) return indexDiff
+  return sourceTieBreaker(a, b)
+}
+
 function sortCitationsInDocument(citations: ChatCitation[]): ChatCitation[] {
   return [...citations].sort((a, b) => {
     const left = citationClause(a)
@@ -52,7 +70,7 @@ function sortCitationsInDocument(citations: ChatCitation[]): ChatCitation[] {
 
 export function documentReferenceSummaries(citations: ChatCitation[]): DocumentReferenceSummary[] {
   const groups = new Map<string, DocumentReferenceSummary>()
-  for (const citation of citations) {
+  for (const citation of orderedCitations(citations)) {
     const key = citation.document_id || citation.document_title || citation.id
     const existing = groups.get(key)
     if (existing) {
@@ -80,7 +98,7 @@ export function documentReferenceSummaries(citations: ChatCitation[]): DocumentR
 }
 
 export function orderedCitations(citations: ChatCitation[]): ChatCitation[] {
-  return documentReferenceSummaries(citations).flatMap((group) => group.citations)
+  return [...citations].sort(compareCitationsByRelevance)
 }
 
 export function formatDocumentReference(summary: DocumentReferenceSummary): string {
@@ -88,4 +106,21 @@ export function formatDocumentReference(summary: DocumentReferenceSummary): stri
     return `${summary.label}。`
   }
   return `${summary.label}：第${summary.clauses.join('条、')}条。`
+}
+
+export function formatCitationReference(citation: ChatCitation): string {
+  const label = sourceLabel(citation)
+  const page =
+    citation.page_start == null
+      ? ''
+      : citation.page_end == null || citation.page_end === citation.page_start
+        ? `p.${citation.page_start}`
+        : `p.${citation.page_start}-${citation.page_end}`
+  const clause = citationClause(citation)
+  const section = citation.section_path?.length
+    ? citation.section_path[citation.section_path.length - 1]
+    : ''
+  const location = clause ? `第${clause}条` : section || ''
+  const parts = [location, page].filter(Boolean)
+  return parts.length > 0 ? `${label}：${parts.join('，')}。` : `${label}。`
 }

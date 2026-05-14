@@ -244,6 +244,73 @@ def test_chat_stream_permission_denied() -> None:
     assert resp.status_code == 403
 
 
+def test_chat_stream_all_kbs_uses_accessible_scope() -> None:
+    _seed()
+
+    async def _add_second_kb() -> None:
+        async with AsyncSessionLocal() as session:
+            kb = KnowledgeBase(id="kb-2", name="KB2", description="", creator_id="user-1")
+            doc = Document(
+                id="doc-2",
+                knowledge_base_id=kb.id,
+                uploader_id="user-1",
+                title="机电安装细则",
+                filename="b.pdf",
+                mime="application/pdf",
+                size_bytes=10,
+                sha256="sha-2",
+                storage_path="b.pdf",
+            )
+            chunk = KnowledgeChunkV2(
+                id="chunk-2",
+                knowledge_base_id=kb.id,
+                document_id=doc.id,
+                chunk_index=0,
+                content="机电安装必须完成接地连续性检查。",
+                section_path=["机电", "接地"],
+                section_id="s-2",
+                content_type="paragraph",
+                doc_kind="plan",
+                tokens=10,
+                sha256="sha-chunk-2",
+                page_start=8,
+                page_end=8,
+            )
+            permission = KnowledgeBasePermission(
+                knowledge_base_id=kb.id, user_id="user-1", role="viewer"
+            )
+            session.add_all([kb, doc, chunk, permission])
+            await session.commit()
+
+    asyncio.run(_add_second_kb())
+
+    async def _factory(messages: list[dict[str, Any]], model: str | None) -> AsyncIterator[str]:
+        yield "应完成接地连续性检查[cite:1]。"
+
+    from app.core.config import get_settings
+
+    get_settings().chat_min_score_threshold = 0.0
+    with patch(
+        "app.services.rag.graph._default_llm_event_stream",
+        side_effect=lambda m, mo: _factory(m, mo),
+    ):
+        client = TestClient(create_app())
+        token = _login(client)
+        resp = client.post(
+            "/api/v2/chat/stream",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"kb_id": "__all__", "question": "接地 连续性"},
+        )
+        assert resp.status_code == 200, resp.text
+
+    events = _parse_sse(resp.text)
+    refs_payload = next(e[1] for e in events if e[0] == "references")
+    assert refs_payload["references"]
+    assert refs_payload["references"][0]["knowledge_base_id"] == "kb-2"
+    done = [e for e in events if e[0] == "done"][-1][1]
+    assert done["finish_reason"] == "stop"
+
+
 def test_chat_stream_no_hit_returns_fallback_message() -> None:
     _seed(with_chunk=False)
     client = TestClient(create_app())

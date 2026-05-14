@@ -44,10 +44,13 @@ def build_reference_payload(
     )
     token = quote(issued.token)
     page = meta.page_start or 1
-    preview_url = f"/api/v2/pdf/preview?document_id={meta.document_id}&page={page}&token={token}"
+    preview_url = (
+        f"/api/v2/pdf/preview?document_id={meta.document_id}&page={page}&token={token}"
+        f"#page={page}"
+    )
     bbox_fragment = _bbox_fragment(meta.bbox)
     if bbox_fragment:
-        preview_url = f"{preview_url}#bbox={bbox_fragment}"
+        preview_url = f"{preview_url}&bbox={bbox_fragment}"
     download_url = f"/api/v2/documents/{meta.document_id}/download?token={token}"
     return {
         "id": f"ref-{meta.index}",

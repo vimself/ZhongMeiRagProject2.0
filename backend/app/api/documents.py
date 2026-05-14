@@ -64,9 +64,11 @@ from app.schemas.ingest import (
 from app.security.jwt import issue_asset_token, issue_pdf_token
 from app.services.deletion import (
     DOCUMENT_DELETING_STATUS,
-    collect_document_artifact_paths,
+    collect_document_deletion_resources,
     delete_artifact_files,
     hard_delete_documents,
+    release_document_ingest_resources,
+    request_document_deletion,
 )
 from app.services.llm.client import DashScopeClient
 from app.services.rag.retriever import Retriever
@@ -304,7 +306,7 @@ async def delete_documents_batch(
     if len(rows) != len(document_ids):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="文档不存在")
 
-    artifact_paths = await collect_document_artifact_paths(db, document_ids)
+    resources = await collect_document_deletion_resources(db, document_ids)
     await _record_audit(
         db,
         actor_user_id=user.id,
@@ -314,9 +316,12 @@ async def delete_documents_batch(
         request=request,
         details={"knowledge_base_id": kb_id, "document_ids": document_ids, "count": len(rows)},
     )
-    await hard_delete_documents(db, document_ids)
+    await request_document_deletion(db, document_ids)
     await db.commit()
-    delete_artifact_files(artifact_paths)
+    await release_document_ingest_resources(resources)
+    await hard_delete_documents(db, document_ids, delete_files=False)
+    await db.commit()
+    delete_artifact_files(resources.artifact_paths)
     return DocumentBatchDeleteResponse(deleted_ids=document_ids, deleted_count=len(document_ids))
 
 
@@ -434,7 +439,7 @@ async def delete_document(
     db: DbSession,
 ) -> DocumentDeleteResponse:
     document, _role = await require_document_role(db, user, document_id, {"owner"})
-    artifact_paths = await collect_document_artifact_paths(db, [document.id])
+    resources = await collect_document_deletion_resources(db, [document.id])
     await _record_audit(
         db,
         actor_user_id=user.id,
@@ -444,9 +449,12 @@ async def delete_document(
         request=request,
         details={"knowledge_base_id": document.knowledge_base_id},
     )
-    await hard_delete_documents(db, [document.id])
+    await request_document_deletion(db, [document.id])
     await db.commit()
-    delete_artifact_files(artifact_paths)
+    await release_document_ingest_resources(resources)
+    await hard_delete_documents(db, [document.id], delete_files=False)
+    await db.commit()
+    delete_artifact_files(resources.artifact_paths)
     return DocumentDeleteResponse(document_id=document_id)
 
 
@@ -875,7 +883,8 @@ def _send_ingest_task(*, job_id: str, document_id: str, actor_user_id: str) -> N
         return
     celery_app.send_task(
         "ingest.process",
-        queue="ingest",
+        queue="ingest-ocr",
+        task_id=job_id,
         kwargs={
             "job_id": job_id,
             "document_id": document_id,

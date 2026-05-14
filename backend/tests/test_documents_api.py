@@ -24,6 +24,7 @@ from app.models.document import (
 from app.models.knowledge_base import KnowledgeBase, KnowledgeBasePermission
 from app.security.login_limiter import login_failure_limiter
 from app.security.password import hash_password
+from app.services.deletion import DocumentDeletionResources
 from app.services.rag.retriever import Retriever
 
 
@@ -487,6 +488,36 @@ def test_delete_document_hard_deletes_related_rows() -> None:
             )
 
     assert asyncio.run(_counts()) == (0, 0, 0, 0, 0, 0)
+
+
+def test_delete_document_releases_ingest_resources(monkeypatch: pytest.MonkeyPatch) -> None:
+    _seed()
+    _seed_document()
+    released: dict[str, list[str]] = {}
+
+    async def _add_ocr_receipt() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(
+                IngestStepReceipt(
+                    job_id="job-id",
+                    step="upload_to_ocr",
+                    idempotency_key="delete-doc-ocr-session",
+                    status="succeeded",
+                    payload_json={"ocr_session_id": "sid-1"},
+                )
+            )
+            await session.commit()
+
+    async def fake_release(resources: DocumentDeletionResources) -> None:
+        released["job_ids"] = list(resources.job_ids)
+        released["ocr_session_ids"] = list(resources.ocr_session_ids)
+
+    asyncio.run(_add_ocr_receipt())
+    monkeypatch.setattr("app.api.documents.release_document_ingest_resources", fake_release)
+    client, token = _client_and_token()
+    resp = client.delete("/api/v2/documents/doc-id", headers=_auth(token))
+    assert resp.status_code == 200
+    assert released == {"job_ids": ["job-id"], "ocr_session_ids": ["sid-1"]}
 
 
 def test_batch_delete_documents() -> None:

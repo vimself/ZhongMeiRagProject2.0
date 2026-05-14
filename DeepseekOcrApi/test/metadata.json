@@ -1,0 +1,1197 @@
+﻿{
+  "knowledge_base": {
+    "id": "774ee5ba-19a4-4c4c-81a1-7ef0fee8a9c1",
+    "name": "test3"
+  },
+  "document": {
+    "id": "5278e7d5-9d3e-4dfe-87a7-b5989491f8ed",
+    "title": "AQ 2056-2016金属非金属矿山在用空气压缩机安全检验规范 第 2 部分：移动式空气压缩机",
+    "filename": "AQ 2056-2016金属非金属矿山在用空气压缩机安全检验规范 第 2 部分：移动式空气压缩机.pdf",
+    "status": "ready",
+    "storage_path": "uploads/documents/2026/05/13/5278e7d5-9d3e-4dfe-87a7-b5989491f8ed.pdf",
+    "sha256": "0fa1b4f307096ccc2c2d874a569f3a9eb1f64c4c3b3e9b975e0ce9480e83591a",
+    "size_bytes": 3264048,
+    "page_count": 8
+  },
+  "ocr_parse_result": {
+    "id": "fe3c8371-c980-498e-a4e6-ef3112f5a02d",
+    "ocr_session_id": "c79fba43-c136-4a9e-a907-a6dec1874f97",
+    "markdown_path": "uploads/documents/markdown/5278e7d5-9d3e-4dfe-87a7-b5989491f8ed.md",
+    "markdown_sha256": "37becc50b3cc8f0d716c47d4c11aa0ed429d5007329832bceda6da8adc6a19a9",
+    "stats": {
+      "asset_count": 8,
+      "chunk_count": 26
+    },
+    "outline": {
+      "outline": [
+        {
+          "level": 2,
+          "title": "Ⅱ",
+          "page_start": 2,
+          "section_path": [
+            "Ⅱ"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "前",
+          "page_start": 2,
+          "section_path": [
+            "前"
+          ]
+        },
+        {
+          "level": 1,
+          "title": "1 范围",
+          "page_start": 3,
+          "section_path": [
+            "1 范围"
+          ]
+        },
+        {
+          "level": 1,
+          "title": "2 规范性引用文件",
+          "page_start": 3,
+          "section_path": [
+            "2 规范性引用文件"
+          ]
+        },
+        {
+          "level": 1,
+          "title": "3 术语和定义",
+          "page_start": 3,
+          "section_path": [
+            "3 术语和定义"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "3.1 转速 rotational speed",
+          "page_start": 3,
+          "section_path": [
+            "3 术语和定义",
+            "3.1 转速 rotational speed"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "3.2 公称容积流量 rated capacity",
+          "page_start": 3,
+          "section_path": [
+            "3 术语和定义",
+            "3.2 公称容积流量 rated capacity"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "3.3 实际容积流量 actual capacity",
+          "page_start": 3,
+          "section_path": [
+            "3 术语和定义",
+            "3.3 实际容积流量 actual capacity"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "3.4 标准状态下的容积流量 standard capacity",
+          "page_start": 3,
+          "section_path": [
+            "3 术语和定义",
+            "3.4 标准状态下的容积流量 standard capacity"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "3.5 标准状态 standard state",
+          "page_start": 3,
+          "section_path": [
+            "3 术语和定义",
+            "3.5 标准状态 standard state"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "4.5.2 压力控制和保护装置",
+          "page_start": 4,
+          "section_path": [
+            "3 术语和定义",
+            "3.5 标准状态 standard state",
+            "4.5.2 压力控制和保护装置"
+          ]
+        },
+        {
+          "level": 4,
+          "title": "4.5.2.1 空气压缩机的末级排气压力应能达到公称排气压力。",
+          "page_start": 4,
+          "section_path": [
+            "3 术语和定义",
+            "3.5 标准状态 standard state",
+            "4.5.2 压力控制和保护装置",
+            "4.5.2.1 空气压缩机的末级排气压力应能达到公称排气压力。"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "4.5.3 排气超温保护装置",
+          "page_start": 4,
+          "section_path": [
+            "3 术语和定义",
+            "3.5 标准状态 standard state",
+            "4.5.3 排气超温保护装置"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "4.5.3 曲轴箱油温",
+          "page_start": 4,
+          "section_path": [
+            "3 术语和定义",
+            "3.5 标准状态 standard state",
+            "4.5.3 曲轴箱油温"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "4.7 运转状态",
+          "page_start": 4,
+          "section_path": [
+            "3 术语和定义",
+            "4.7 运转状态"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "4.8 转速",
+          "page_start": 4,
+          "section_path": [
+            "3 术语和定义",
+            "4.8 转速"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "4.9 容积流量",
+          "page_start": 4,
+          "section_path": [
+            "3 术语和定义",
+            "4.9 容积流量"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "4.10 输入比功率",
+          "page_start": 4,
+          "section_path": [
+            "3 术语和定义",
+            "4.10 输入比功率"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "4.11 输入电流",
+          "page_start": 4,
+          "section_path": [
+            "3 术语和定义",
+            "4.11 输入电流"
+          ]
+        },
+        {
+          "level": 1,
+          "title": "5 检验方法",
+          "page_start": 4,
+          "section_path": [
+            "5 检验方法"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "5.1 密封与防护",
+          "page_start": 4,
+          "section_path": [
+            "5 检验方法",
+            "5.1 密封与防护"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "5.2 润滑系统",
+          "page_start": 4,
+          "section_path": [
+            "5 检验方法",
+            "5.2 润滑系统"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.2.1 检查受检单位提供的润滑油闪点的有效证明或直接进行检验，应符合 4.2.1 的要求。",
+          "page_start": 4,
+          "section_path": [
+            "5 检验方法",
+            "5.2 润滑系统",
+            "5.2.1 检查受检单位提供的润滑油闪点的有效证明或直接进行检验，应符合 4.2.1 的要求。"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.2.2 采用目测方式检验 4.2.2 规定的检验内容。",
+          "page_start": 4,
+          "section_path": [
+            "5 检验方法",
+            "5.2 润滑系统",
+            "5.2.2 采用目测方式检验 4.2.2 规定的检验内容。"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.2.3 在被检验设备上人为制造模拟故障的条件下，检验润滑油压力低于规定值时停车保护装置或信",
+          "page_start": 4,
+          "section_path": [
+            "5 检验方法",
+            "5.2 润滑系统",
+            "5.2.3 在被检验设备上人为制造模拟故障的条件下，检验润滑油压力低于规定值时停车保护装置或信"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.9.2 储气罐充填法(风包法)测量空气压缩机的容积流量；",
+          "page_start": 5,
+          "section_path": [
+            "5 检验方法",
+            "5.2 润滑系统",
+            "5.9.2 储气罐充填法(风包法)测量空气压缩机的容积流量；"
+          ]
+        },
+        {
+          "level": 4,
+          "title": "5.9.2.1 用充水法或直接测量的方法测量储气罐(风包)及相连管路的容积 V。",
+          "page_start": 5,
+          "section_path": [
+            "5 检验方法",
+            "5.2 润滑系统",
+            "5.9.2 储气罐充填法(风包法)测量空气压缩机的容积流量；",
+            "5.9.2.1 用充水法或直接测量的方法测量储气罐(风包)及相连管路的容积 V。"
+          ]
+        },
+        {
+          "level": 4,
+          "title": "5.9.2.2 切断所有用气设备，在储气罐上安装压力测量仪器及两支点温计测量储气罐内气体压力和温",
+          "page_start": 5,
+          "section_path": [
+            "5 检验方法",
+            "5.2 润滑系统",
+            "5.9.2 储气罐充填法(风包法)测量空气压缩机的容积流量；",
+            "5.9.2.2 切断所有用气设备，在储气罐上安装压力测量仪器及两支点温计测量储气罐内气体压力和温"
+          ]
+        },
+        {
+          "level": 4,
+          "title": "5.9.2.3 储气罐充填法(风包法)测量空气压缩机的容积流量测量系统的布置示意图如图1所示。测",
+          "page_start": 5,
+          "section_path": [
+            "5 检验方法",
+            "5.2 润滑系统",
+            "5.9.2 储气罐充填法(风包法)测量空气压缩机的容积流量；",
+            "5.9.2.3 储气罐充填法(风包法)测量空气压缩机的容积流量测量系统的布置示意图如图1所示。测"
+          ]
+        },
+        {
+          "level": 4,
+          "title": "5.9.2.4 空气压缩机容积流量的计算方法如下：",
+          "page_start": 5,
+          "section_path": [
+            "5 检验方法",
+            "5.2 润滑系统",
+            "5.9.2 储气罐充填法(风包法)测量空气压缩机的容积流量；",
+            "5.9.2.4 空气压缩机容积流量的计算方法如下："
+          ]
+        },
+        {
+          "level": 2,
+          "title": "5.10 输入比功率",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.1 空气压缩机的输入功率应采用测量系统精确度不低于 \\( \\pm2\\% \\) 的仪器检验。",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.1 空气压缩机的输入功率应采用测量系统精确度不低于 \\( \\pm2\\% \\) 的仪器检验。"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.2 应在空气压缩机运转平稳时进行检验，并应靠近空气压缩机的输入端进行检验。",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.2 应在空气压缩机运转平稳时进行检验，并应靠近空气压缩机的输入端进行检验。"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.3 在检验时,应以相等的时间间隔记录不少于3组(次)测量值,计算其平均输入功率作为检验",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.3 在检验时,应以相等的时间间隔记录不少于3组(次)测量值,计算其平均输入功率作为检验"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "page_start": 6,
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 1,
+          "title": "15 5020·862",
+          "page_start": 7,
+          "section_path": [
+            "15 5020·862"
+          ]
+        }
+      ],
+      "sections": [
+        {
+          "level": 1,
+          "title": "未分章节",
+          "content": "第 2 部分: 移动式空气压缩机\n\nSafety testing specification of in-service air compressor for metal and nonmetal mines—Part 2: Portable air compressor\n\nSafety testing specification of in-service air compressor for metal and nonmetal mines—Part 2: Portable air compressor",
+          "page_end": 2,
+          "page_start": 1,
+          "section_id": "108bdd55dc87920fd991eae0e90e89ae3c985f53",
+          "section_path": [
+            "未分章节"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "前",
+          "content": "AQ 2056—2016\n\n___\n\n___\n___\n___\n___",
+          "page_end": 3,
+          "page_start": 2,
+          "section_id": "073d8528405ef6313994e97e9b09181c166fdefc",
+          "section_path": [
+            "前"
+          ]
+        },
+        {
+          "level": 1,
+          "title": "1 范围",
+          "content": "本部分规定了金属非金属矿山在用移动式空气压缩机安全检验的检验项目及技术要求、检验方法、判定规则和检验周期。\n\n本部分适用于金属非金属矿山在用移动式空气压缩机。\n\n本部分不适用于驱动功率小于 18.5 kW 的空气压缩机。",
+          "page_end": 3,
+          "page_start": 3,
+          "section_id": "8936219da451f507ed45e1312e6d1e0cd3701710",
+          "section_path": [
+            "1 范围"
+          ]
+        },
+        {
+          "level": 1,
+          "title": "2 规范性引用文件",
+          "content": "下列文件对于本文件的应用是必不可少的。凡是注日期的引用文件，仅注日期的版本适用于本文件。凡是不注日期的引用文件，其最新版本（包括所有的修改单）适用于本文件。\n\nGB 19153 容积式空气压缩机能效限定值及能效等级\n\nGB/T 15487 容积式压缩机流量测量方法",
+          "page_end": 3,
+          "page_start": 3,
+          "section_id": "63434defac7390186b3e7719b26db1ce80066200",
+          "section_path": [
+            "2 规范性引用文件"
+          ]
+        },
+        {
+          "level": 1,
+          "title": "3 术语和定义",
+          "content": "下列术语和定义适用于本文件。",
+          "page_end": 3,
+          "page_start": 3,
+          "section_id": "d578d8ae11296fbd867bde76fe46706f271a44bb",
+          "section_path": [
+            "3 术语和定义"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "3.1 转速 rotational speed",
+          "content": "空气压缩机主动轴单位时间内的回转数。",
+          "page_end": 3,
+          "page_start": 3,
+          "section_id": "18b000800440ff260b7234f60b795526ca43df58",
+          "section_path": [
+            "3 术语和定义",
+            "3.1 转速 rotational speed"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "3.2 公称容积流量 rated capacity",
+          "content": "空气压缩机铭牌上标注的容积流量或排气量，该流量值是指标准状态（压力为 1.0133×10⁵ Pa、温度为 20℃）时空气压缩机进口的容积流量值。",
+          "page_end": 3,
+          "page_start": 3,
+          "section_id": "92ba2262251e5df1c7ad3acd7acf3ff077b19028",
+          "section_path": [
+            "3 术语和定义",
+            "3.2 公称容积流量 rated capacity"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "3.3 实际容积流量 actual capacity",
+          "content": "单位时间内空气压缩机最末一级排出的气体，换算到第一级进口状态的压力和温度时的值。",
+          "page_end": 3,
+          "page_start": 3,
+          "section_id": "361860954eb483743a7ea287557cc3c60723d9e7",
+          "section_path": [
+            "3 术语和定义",
+            "3.3 实际容积流量 actual capacity"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "3.4 标准状态下的容积流量 standard capacity",
+          "content": "将实际容积流量折算到标准状态时的值。",
+          "page_end": 3,
+          "page_start": 3,
+          "section_id": "db5b2a7a5ab66554984670e78114dd944f7c51df",
+          "section_path": [
+            "3 术语和定义",
+            "3.4 标准状态下的容积流量 standard capacity"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "3.5 标准状态 standard state",
+          "content": "压力为标准大气压力（1.0133×10⁵ Pa）和绝对温度 293 K（20℃）时的空气状态。",
+          "page_end": 4,
+          "page_start": 3,
+          "section_id": "81ababd81c813c2cb9aedc1a9fa69aec6ec74312",
+          "section_path": [
+            "3 术语和定义",
+            "3.5 标准状态 standard state"
+          ]
+        },
+        {
+          "level": 4,
+          "title": "4.5.2.1 空气压缩机的末级排气压力应能达到公称排气压力。",
+          "content": "(止回阀除外)时,空气压缩机末级排气出口与截止阀门之间应安装安全阀。",
+          "page_end": 4,
+          "page_start": 4,
+          "section_id": "9b62fe905d6dc7b3347ec49600250f1e55e69eb8",
+          "section_path": [
+            "3 术语和定义",
+            "3.5 标准状态 standard state",
+            "4.5.2 压力控制和保护装置",
+            "4.5.2.1 空气压缩机的末级排气压力应能达到公称排气压力。"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "4.5.3 排气超温保护装置",
+          "content": "排气超温保护装置应符合下列要求:\n\n——活塞式空气压缩机应具有排气温度的超温停车和报警功能,超温停车和报警装置的超温报警温度限值不应超过160℃;\n\n——回转式空气压缩机应具有排气温度的超温停车和报警功能,超温停车和报警装置的超温报警温度限值不应超过120℃。",
+          "page_end": 4,
+          "page_start": 4,
+          "section_id": "0209b007c9d00f49bcb8a90e0d0bb694b6145fff",
+          "section_path": [
+            "3 术语和定义",
+            "3.5 标准状态 standard state",
+            "4.5.3 排气超温保护装置"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "4.5.3 曲轴箱油温",
+          "content": "活塞式空气压缩机曲轴箱油温不应超过70℃。",
+          "page_end": 4,
+          "page_start": 4,
+          "section_id": "afcee26dc39957b55f871a77a2ab68da88b43c53",
+          "section_path": [
+            "3 术语和定义",
+            "3.5 标准状态 standard state",
+            "4.5.3 曲轴箱油温"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "4.7 运转状态",
+          "content": "各运动部件运行正常,无异常现象。",
+          "page_end": 4,
+          "page_start": 4,
+          "section_id": "5a8951fe223be27dfc591d556242f106990c1732",
+          "section_path": [
+            "3 术语和定义",
+            "4.7 运转状态"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "4.8 转速",
+          "content": "对于非变频调速控制的空气压缩机,其主轴转速与规定值间偏差不应超过±3%。",
+          "page_end": 4,
+          "page_start": 4,
+          "section_id": "e349f96e90ce4134ef1d0d448a7e19491e987ba9",
+          "section_path": [
+            "3 术语和定义",
+            "4.8 转速"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "4.9 容积流量",
+          "content": "标准状态下的容积流量应不小于0.85Qe, Qe为空气压缩机的公称容积流量。",
+          "page_end": 4,
+          "page_start": 4,
+          "section_id": "49b3721a8cfe274f74e43ae707c47fbb1bed67e9",
+          "section_path": [
+            "3 术语和定义",
+            "4.9 容积流量"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "4.10 输入比功率",
+          "content": "输入比功率应不大于GB 9153规定的目标能效限定值T。",
+          "page_end": 4,
+          "page_start": 4,
+          "section_id": "2d09592a020a3a27d2837d7e3ad7864da9ec2303",
+          "section_path": [
+            "3 术语和定义",
+            "4.10 输入比功率"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "4.11 输入电流",
+          "content": "驱动电动机的输入电流应不大于额定电流值。",
+          "page_end": 4,
+          "page_start": 4,
+          "section_id": "48e6ce672a525d039d38a42543e3c2f0d0c6aac4",
+          "section_path": [
+            "3 术语和定义",
+            "4.11 输入电流"
+          ]
+        },
+        {
+          "level": 2,
+          "title": "5.1 密封与防护",
+          "content": "采用目测方式检验 4.1 规定的检验内容。",
+          "page_end": 4,
+          "page_start": 4,
+          "section_id": "3a01882881e8da89f54301d163b84151f8ff2295",
+          "section_path": [
+            "5 检验方法",
+            "5.1 密封与防护"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.2.3 在被检验设备上人为制造模拟故障的条件下，检验润滑油压力低于规定值时停车保护装置或信",
+          "content": "3",
+          "page_end": 5,
+          "page_start": 4,
+          "section_id": "9d0ffb53ae19fcbe205e2eeda2056a21c7723408",
+          "section_path": [
+            "5 检验方法",
+            "5.2 润滑系统",
+            "5.2.3 在被检验设备上人为制造模拟故障的条件下，检验润滑油压力低于规定值时停车保护装置或信"
+          ]
+        },
+        {
+          "level": 4,
+          "title": "5.9.2.1 用充水法或直接测量的方法测量储气罐(风包)及相连管路的容积 V。",
+          "content": "![](images/7_0.jpg)\n\n![](images/7_1.jpg)\n\n![](images/7_2.jpg)\n\n![](images/7_3.jpg)\n\n![](images/7_4.jpg)\n\n![](images/7_5.jpg)\n\n![](images/7_6.jpg)\n\n![](images/7_7.jpg)\n\n说明：\n\n1——空气压缩机；\n\n2——储气罐；\n\n3——闸门；\n\n4——旋塞；\n\n5——温度计；\n\n6——压力表。\n\n图 1 储气罐充填法(风包法)测量布置示意图",
+          "page_end": 5,
+          "page_start": 5,
+          "section_id": "5a83baf02d1ca1a7eae45aee88424b43bff1a8f2",
+          "section_path": [
+            "5 检验方法",
+            "5.2 润滑系统",
+            "5.9.2 储气罐充填法(风包法)测量空气压缩机的容积流量；",
+            "5.9.2.1 用充水法或直接测量的方法测量储气罐(风包)及相连管路的容积 V。"
+          ]
+        },
+        {
+          "level": 4,
+          "title": "5.9.2.3 储气罐充填法(风包法)测量空气压缩机的容积流量测量系统的布置示意图如图1所示。测",
+          "content": "量时，把储气罐内的剩余气体及油、水放净，然后关闭闸门3，开动空气压缩机。当储气罐中空气压力升\n\n至 0.2 MPa~0.3 MPa 时，开始用秒表计时，同时记录储气罐中气体的压力  \\( p_{1} \\)  温度  \\( T_{1} \\) ，当储气罐气体\n\n达到测试压力  \\( p_{2} \\)  。时，立即停止秒表和空气压缩机，并迅速记下压力由  \\( p_{1} \\)  升至  \\( p_{2} \\)  的时间 t 和温度  \\( T_{2} \\)  。",
+          "page_end": 5,
+          "page_start": 5,
+          "section_id": "47eac96cd370c57c1934464be89bcd27b47a895e",
+          "section_path": [
+            "5 检验方法",
+            "5.2 润滑系统",
+            "5.9.2 储气罐充填法(风包法)测量空气压缩机的容积流量；",
+            "5.9.2.3 储气罐充填法(风包法)测量空气压缩机的容积流量测量系统的布置示意图如图1所示。测"
+          ]
+        },
+        {
+          "level": 4,
+          "title": "5.9.2.4 空气压缩机容积流量的计算方法如下：",
+          "content": "a）实际容积流量\n\na）\n\n \\[ Q_{_{sj}}=\\frac{60T_{_{0}}V}{t p_{_{0}}}\\left(\\frac{p_{_{2}}}{T_{_{2}}}-\\frac{p_{_{1}}}{T_{_{1}}}\\right) \\] \n\n式中：\n\nQ_{sj}\n\nV\n\n \\( p_{1} \\) 、 \\( T_{1} \\) \n\n \\( p_{2} \\) 、 \\( T_{2} \\) \n\nt\n\nb）\n\n标准状态下的容积流量 Q:\n\n \\[ Q=Q_{_{sj}}\\frac{p_{_{0}}T_{_{20}}}{pT_{_{0}}} \\quad ……(2) \\]",
+          "page_end": 6,
+          "page_start": 5,
+          "section_id": "a10e04395e08c995c6772884dbca9e5b25f70c50",
+          "section_path": [
+            "5 检验方法",
+            "5.2 润滑系统",
+            "5.9.2 储气罐充填法(风包法)测量空气压缩机的容积流量；",
+            "5.9.2.4 空气压缩机容积流量的计算方法如下："
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.3 在检验时,应以相等的时间间隔记录不少于3组(次)测量值,计算其平均输入功率作为检验",
+          "content": "结果。",
+          "page_end": 6,
+          "page_start": 6,
+          "section_id": "e62e7e149f3ec7ea3943b5136a91126577dfbfad",
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.3 在检验时,应以相等的时间间隔记录不少于3组(次)测量值,计算其平均输入功率作为检验"
+          ]
+        },
+        {
+          "level": 3,
+          "title": "5.10.4 按式(5)计算输入比功率 q:",
+          "content": "开本 880mm×1230mm 1/16\n\n2017年3月第1版 2017年3月第1次印刷",
+          "page_end": 7,
+          "page_start": 6,
+          "section_id": "31eca5926d536454d8e91c16afd55ca73aefaef5",
+          "section_path": [
+            "5 检验方法",
+            "5.10 输入比功率",
+            "5.10.4 按式(5)计算输入比功率 q:"
+          ]
+        },
+        {
+          "level": 1,
+          "title": "15 5020·862",
+          "content": "社内编号 8671 定价 15.00 元\n\n版权所有 违者必究\n\n本书如有缺页、倒页、脱页等质量问题，本社负责调换",
+          "page_end": 8,
+          "page_start": 7,
+          "section_id": "565cfae72042e17aecd2c736904bcc7985f8d8a9",
+          "section_path": [
+            "15 5020·862"
+          ]
+        }
+      ],
+      "warnings": [],
+      "page_count": 8
+    }
+  },
+  "assets": [
+    {
+      "id": "a17c95b0-70e9-4536-8ee8-10723873a7de",
+      "kind": "image",
+      "page_no": 8,
+      "bbox": {
+        "x": 0.6666666666666666,
+        "y": 0.05166270783847981,
+        "width": 0.04030226700251889,
+        "height": 0.03800475059382423
+      },
+      "storage_path": "uploads/documents/assets/5278e7d5-9d3e-4dfe-87a7-b5989491f8ed/7_0.jpg",
+      "caption": null
+    },
+    {
+      "id": "090ddf0c-f0fb-4c6b-9e86-8bd0d8917483",
+      "kind": "image",
+      "page_no": 8,
+      "bbox": {
+        "x": 0.6666666666666666,
+        "y": 0.09204275534441804,
+        "width": 0.04030226700251889,
+        "height": 0.03681710213776722
+      },
+      "storage_path": "uploads/documents/assets/5278e7d5-9d3e-4dfe-87a7-b5989491f8ed/7_1.jpg",
+      "caption": null
+    },
+    {
+      "id": "e45bfb09-593a-4267-b113-2f34a7f419cf",
+      "kind": "image",
+      "page_no": 8,
+      "bbox": {
+        "x": 0.6666666666666666,
+        "y": 0.13064133016627075,
+        "width": 0.04030226700251889,
+        "height": 0.03741092636579573
+      },
+      "storage_path": "uploads/documents/assets/5278e7d5-9d3e-4dfe-87a7-b5989491f8ed/7_2.jpg",
+      "caption": null
+    },
+    {
+      "id": "1319452f-0943-4724-9a4f-dd2c5e0a65f1",
+      "kind": "image",
+      "page_no": 8,
+      "bbox": {
+        "x": 0.6666666666666666,
+        "y": 0.16983372921615203,
+        "width": 0.04030226700251889,
+        "height": 0.03681710213776722
+      },
+      "storage_path": "uploads/documents/assets/5278e7d5-9d3e-4dfe-87a7-b5989491f8ed/7_3.jpg",
+      "caption": null
+    },
+    {
+      "id": "5432b6c3-2088-4cfb-ba44-5d326539af05",
+      "kind": "image",
+      "page_no": 8,
+      "bbox": {
+        "x": 0.6666666666666666,
+        "y": 0.20902612826603328,
+        "width": 0.04030226700251889,
+        "height": 0.03681710213776722
+      },
+      "storage_path": "uploads/documents/assets/5278e7d5-9d3e-4dfe-87a7-b5989491f8ed/7_4.jpg",
+      "caption": null
+    },
+    {
+      "id": "16a59506-f185-4ac1-aca3-ed4c338783fa",
+      "kind": "image",
+      "page_no": 8,
+      "bbox": {
+        "x": 0.6666666666666666,
+        "y": 0.24821852731591448,
+        "width": 0.04030226700251889,
+        "height": 0.03681710213776722
+      },
+      "storage_path": "uploads/documents/assets/5278e7d5-9d3e-4dfe-87a7-b5989491f8ed/7_5.jpg",
+      "caption": null
+    },
+    {
+      "id": "b9c94240-2843-455e-8395-c4bb392e8108",
+      "kind": "image",
+      "page_no": 8,
+      "bbox": {
+        "x": 0.6666666666666666,
+        "y": 0.28681710213776723,
+        "width": 0.04030226700251889,
+        "height": 0.03741092636579573
+      },
+      "storage_path": "uploads/documents/assets/5278e7d5-9d3e-4dfe-87a7-b5989491f8ed/7_6.jpg",
+      "caption": null
+    },
+    {
+      "id": "9b239da6-5f9b-480e-a28c-545173337ba5",
+      "kind": "image",
+      "page_no": 8,
+      "bbox": {
+        "x": 0.6666666666666666,
+        "y": 0.32600950118764843,
+        "width": 0.04030226700251889,
+        "height": 0.03681710213776722
+      },
+      "storage_path": "uploads/documents/assets/5278e7d5-9d3e-4dfe-87a7-b5989491f8ed/7_7.jpg",
+      "caption": null
+    }
+  ]
+}

@@ -30,9 +30,11 @@ from app.schemas.knowledge_base import (
 )
 from app.services.deletion import (
     DOCUMENT_DELETING_STATUS,
-    collect_document_artifact_paths,
+    collect_document_deletion_resources,
     delete_artifact_files,
     hard_delete_knowledge_base,
+    release_document_ingest_resources,
+    request_document_deletion,
 )
 
 router = APIRouter(prefix="/api/v2/knowledge-bases", tags=["knowledge-base"])
@@ -461,7 +463,7 @@ async def delete_knowledge_base(
     active_document_count = sum(
         1 for document in documents if document.status not in {"disabled", DOCUMENT_DELETING_STATUS}
     )
-    artifact_paths = await collect_document_artifact_paths(db, document_ids)
+    resources = await collect_document_deletion_resources(db, document_ids)
     creator_username, creator_name = await _creator_identity_for_kb(db, kb)
     deleted_payload = _kb_out(
         kb,
@@ -483,9 +485,12 @@ async def delete_knowledge_base(
         request=request,
         details={"name": kb.name, "document_count": len(document_ids)},
     )
+    await request_document_deletion(db, document_ids)
+    await db.commit()
+    await release_document_ingest_resources(resources)
     await hard_delete_knowledge_base(db, kb.id)
     await db.commit()
-    delete_artifact_files(artifact_paths)
+    delete_artifact_files(resources.artifact_paths)
     return deleted_payload
 
 

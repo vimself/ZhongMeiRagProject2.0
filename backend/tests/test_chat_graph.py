@@ -265,7 +265,8 @@ def test_build_reference_payload_contains_urls() -> None:
     assert payload["document_id"] == "d-42"
     assert "/api/v2/pdf/preview" in payload["preview_url"]
     assert "token=" in payload["preview_url"]
-    assert "#bbox=1,2,3,4" in payload["preview_url"]
+    assert "#page=7" in payload["preview_url"]
+    assert "bbox=1,2,3,4" in payload["preview_url"]
     assert "/api/v2/documents/d-42/download" in payload["download_url"]
 
 
@@ -374,6 +375,54 @@ def test_prepare_citations_sqlite_fallback_hits_chunks() -> None:
         assert state.citations, "应至少命中一条 chunk"
         assert state.citations[0].document_title == "施工方案总则"
         assert state.citations[0].page_start == 3
+
+    asyncio.run(_run())
+
+
+def test_prepare_citations_can_search_multiple_kbs() -> None:
+    async def _run() -> None:
+        await _seed()
+        async with AsyncSessionLocal() as db:
+            kb2 = KnowledgeBase(id="kb-2", name="KB2", description="", creator_id="user-1")
+            doc2 = Document(
+                id="doc-2",
+                knowledge_base_id=kb2.id,
+                uploader_id="user-1",
+                title="机电安装细则",
+                filename="b.pdf",
+                mime="application/pdf",
+                size_bytes=10,
+                sha256="sha-2",
+                storage_path="b.pdf",
+            )
+            chunk2 = KnowledgeChunkV2(
+                id="chunk-kb2",
+                knowledge_base_id=kb2.id,
+                document_id=doc2.id,
+                chunk_index=0,
+                content="机电安装必须完成接地连续性检查。",
+                section_path=["机电", "接地"],
+                section_id="s-kb2",
+                content_type="paragraph",
+                doc_kind="plan",
+                tokens=10,
+                sha256="sha-kb2",
+                page_start=8,
+                page_end=8,
+            )
+            db.add_all([kb2, doc2, chunk2])
+            await db.commit()
+
+            state = await rag_graph.prepare_citations(
+                db,
+                kb_id="__all__",
+                kb_ids=["kb-1", "kb-2"],
+                user_id="user-1",
+                query="接地 连续性",
+            )
+        assert state.citations, "应能命中跨知识库 chunk"
+        assert state.citations[0].knowledge_base_id == "kb-2"
+        assert state.citations[0].document_title == "机电安装细则"
 
     asyncio.run(_run())
 

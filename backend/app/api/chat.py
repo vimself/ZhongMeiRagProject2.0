@@ -21,7 +21,7 @@ from app.core.config import get_settings
 from app.core.timezone import beijing_now, isoformat_beijing
 from app.models.auth import User
 from app.models.chat import ChatMessage, ChatMessageCitation, ChatSession
-from app.models.knowledge_base import KnowledgeBase
+from app.models.knowledge_base import KnowledgeBase, KnowledgeBasePermission
 from app.schemas.chat import (
     ChatCitationOut,
     ChatMessageOut,
@@ -41,6 +41,7 @@ from app.services.rag.graph import (
 )
 
 router = APIRouter(prefix="/api/v2/chat", tags=["chat"])
+ALL_KNOWLEDGE_BASES_ID = "__all__"
 
 CurrentUser = Annotated[User, Depends(current_user)]
 
@@ -57,6 +58,37 @@ async def _ensure_kb_viewer(db: Any, user: User, kb_id: str) -> KnowledgeBase:
                 detail="没有访问此知识库的权限",
             )
     return kb
+
+
+async def _accessible_kb_ids(db: Any, user: User) -> list[str]:
+    if user.role == "admin":
+        rows = await db.execute(select(KnowledgeBase.id).where(KnowledgeBase.is_active.is_(True)))
+        return [row[0] for row in rows.all()]
+    rows = await db.execute(
+        select(KnowledgeBasePermission.knowledge_base_id)
+        .join(KnowledgeBase, KnowledgeBase.id == KnowledgeBasePermission.knowledge_base_id)
+        .where(
+            KnowledgeBasePermission.user_id == user.id,
+            KnowledgeBasePermission.role.in_(("viewer", "editor", "owner")),
+            KnowledgeBase.is_active.is_(True),
+        )
+    )
+    return [row[0] for row in rows.all()]
+
+
+async def _resolve_chat_kb_scope(
+    db: Any, user: User, kb_id: str
+) -> tuple[str | None, list[str], str]:
+    if kb_id == ALL_KNOWLEDGE_BASES_ID:
+        kb_ids = await _accessible_kb_ids(db, user)
+        if not kb_ids:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="没有可用知识库",
+            )
+        return None, kb_ids, ALL_KNOWLEDGE_BASES_ID
+    kb = await _ensure_kb_viewer(db, user, kb_id)
+    return kb.id, [kb.id], kb.id
 
 
 def _iso(value: datetime | None) -> str:
@@ -110,7 +142,12 @@ def _citation_out(row: ChatMessageCitation, user_id: str) -> ChatCitationOut:
     return ChatCitationOut(**payload)
 
 
+def _citation_sort_key(row: ChatMessageCitation) -> tuple[float, int, str]:
+    return (-float(row.score or 0.0), int(row.index or 0), row.id)
+
+
 def _message_out(message: ChatMessage, user_id: str) -> ChatMessageOut:
+    citations = sorted(message.citations or [], key=_citation_sort_key)
     return ChatMessageOut(
         id=message.id,
         role=message.role,
@@ -118,7 +155,7 @@ def _message_out(message: ChatMessage, user_id: str) -> ChatMessageOut:
         finish_reason=message.finish_reason,
         model=message.model,
         created_at=_iso(message.created_at),
-        citations=[_citation_out(row, user_id) for row in (message.citations or [])],
+        citations=[_citation_out(row, user_id) for row in citations],
     )
 
 
@@ -245,7 +282,7 @@ async def chat_stream(
     user: CurrentUser,
     db: DbSession,
 ) -> EventSourceResponse:
-    kb = await _ensure_kb_viewer(db, user, body.kb_id)
+    session_kb_id, target_kb_ids, audit_kb_id = await _resolve_chat_kb_scope(db, user, body.kb_id)
     # Session handling
     session: ChatSession | None = None
     if body.session_id:
@@ -253,15 +290,16 @@ async def chat_stream(
         if session is None or session.user_id != user.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="会话不存在")
         if session.knowledge_base_id is None:
-            session.knowledge_base_id = kb.id
-        elif session.knowledge_base_id != kb.id:
+            if session_kb_id is not None:
+                session.knowledge_base_id = session_kb_id
+        elif session.knowledge_base_id != session_kb_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="会话所属知识库与当前请求不一致",
             )
     if session is None:
         title = body.question.strip()[:40] or "新会话"
-        session = ChatSession(user_id=user.id, knowledge_base_id=kb.id, title=title)
+        session = ChatSession(user_id=user.id, knowledge_base_id=session_kb_id, title=title)
         db.add(session)
         await db.flush()
     session_id = session.id
@@ -289,7 +327,8 @@ async def chat_stream(
         }
         state = await prepare_citations(
             db,
-            kb_id=kb.id,
+            kb_id=audit_kb_id,
+            kb_ids=target_kb_ids,
             user_id=user.id,
             query=body.question,
             filters=body.filters,
@@ -305,7 +344,11 @@ async def chat_stream(
             target_type="chat_session",
             target_id=session_id,
             request=request,
-            details={"kb_id": kb.id, "citations": len(references)},
+            details={
+                "kb_id": audit_kb_id,
+                "kb_count": len(target_kb_ids),
+                "citations": len(references),
+            },
         )
         await db.commit()
         # 1) 先下发 references

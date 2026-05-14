@@ -24,8 +24,13 @@ from app.models.knowledge_base import KnowledgeBase
 from app.security.password import hash_password
 from app.services.deletion import hard_delete_documents
 from app.services.ingest.dead_letter import mark_dead_letter
-from app.services.ingest.idempotency import run_idempotent_step
-from app.services.ocr.exceptions import OCRFailed
+from app.services.ingest.idempotency import (
+    EXTERNAL_PAYLOAD_MARKER,
+    idempotency_key,
+    run_idempotent_step,
+    write_receipt,
+)
+from app.services.ocr.exceptions import OCRFailed, OCRTransient
 from app.tasks.ingest import process_ingest_job
 
 
@@ -54,7 +59,7 @@ class FakeOCR:
         self.callback_url = callback_url
         return self.session_id
 
-    async def poll_until_done(self, _session_id: str) -> dict[str, Any]:
+    async def poll_until_done(self, _session_id: str, **_kwargs: Any) -> dict[str, Any]:
         return {"status": "completed"}
 
     async def fetch_markdown(self, _session_id: str, include_meta: bool = False) -> dict[str, Any]:
@@ -69,8 +74,13 @@ class FakeOCR:
 
 
 class FailingOCR(FakeOCR):
-    async def poll_until_done(self, _session_id: str) -> dict[str, Any]:
+    async def poll_until_done(self, _session_id: str, **_kwargs: Any) -> dict[str, Any]:
         raise OCRFailed("ocr failed")
+
+
+class TransientFailingOCR(FakeOCR):
+    async def poll_until_done(self, _session_id: str, **_kwargs: Any) -> dict[str, Any]:
+        raise OCRTransient("HealthWatchdog: OCR service is no longer available")
 
 
 class FakeTrackAIndexer:
@@ -143,7 +153,7 @@ async def _seed(tmp_path: Path) -> None:
 def _patch_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     settings = get_settings()
     monkeypatch.setattr(settings, "upload_dir", str(tmp_path / "uploads"))
-    monkeypatch.setattr("app.tasks.ingest.DeepSeekOCRClient", FakeOCR)
+    monkeypatch.setattr("app.tasks.ingest.GlmOCRClient", FakeOCR)
     monkeypatch.setattr("app.tasks.ingest.TrackAIndexer", FakeTrackAIndexer)
 
 
@@ -221,9 +231,55 @@ async def test_process_failure_marks_dead(monkeypatch: pytest.MonkeyPatch, tmp_p
     await _seed(tmp_path)
     settings = get_settings()
     monkeypatch.setattr(settings, "upload_dir", str(tmp_path / "uploads"))
-    monkeypatch.setattr("app.tasks.ingest.DeepSeekOCRClient", FailingOCR)
+    monkeypatch.setattr("app.tasks.ingest.GlmOCRClient", FailingOCR)
     with pytest.raises(OCRFailed):
         await process_ingest_job("job-id", "doc-id", "user-id")
+    async with AsyncSessionLocal() as session:
+        job = await session.get(DocumentIngestJob, "job-id")
+        doc = await session.get(Document, "doc-id")
+    assert job is not None and job.status == "dead"
+    assert doc is not None and doc.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_process_transient_ocr_failure_stays_queued_before_final_retry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    await _seed(tmp_path)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path / "uploads"))
+    monkeypatch.setattr("app.tasks.ingest.GlmOCRClient", TransientFailingOCR)
+    with pytest.raises(OCRTransient):
+        await process_ingest_job(
+            "job-id",
+            "doc-id",
+            "user-id",
+            retry_index=0,
+            max_retries=5,
+        )
+    async with AsyncSessionLocal() as session:
+        job = await session.get(DocumentIngestJob, "job-id")
+        doc = await session.get(Document, "doc-id")
+    assert job is not None and job.status == "queued"
+    assert doc is not None and doc.status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_process_transient_ocr_failure_marks_dead_on_final_retry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    await _seed(tmp_path)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path / "uploads"))
+    monkeypatch.setattr("app.tasks.ingest.GlmOCRClient", TransientFailingOCR)
+    with pytest.raises(OCRTransient):
+        await process_ingest_job(
+            "job-id",
+            "doc-id",
+            "user-id",
+            retry_index=5,
+            max_retries=5,
+        )
     async with AsyncSessionLocal() as session:
         job = await session.get(DocumentIngestJob, "job-id")
         doc = await session.get(Document, "doc-id")
@@ -320,3 +376,75 @@ async def test_idempotent_step_reuses_payload(tmp_path: Path) -> None:
         )
     assert first == second
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_large_receipt_payload_is_externalized(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    await _seed(tmp_path)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path / "uploads"))
+    monkeypatch.setattr(settings, "ingest_receipt_inline_max_bytes", 64)
+
+    payload = {"vectors": [[0.1, 0.2, 0.3] for _ in range(20)], "count": 20}
+    input_payload = {"chunk_sha256": ["a", "b"]}
+    key = idempotency_key("job-id", "embed_batch", input_payload)
+
+    async with AsyncSessionLocal() as session:
+        await write_receipt(
+            session,
+            job_id="job-id",
+            step="embed_batch",
+            key=key,
+            payload=payload,
+        )
+        await session.commit()
+
+    async with AsyncSessionLocal() as session:
+        receipt = await session.scalar(select(IngestStepReceipt))
+        assert receipt is not None
+        assert receipt.payload_json[EXTERNAL_PAYLOAD_MARKER] is True
+        restored = await run_idempotent_step(
+            session,
+            job_id="job-id",
+            step="embed_batch",
+            input_payload=input_payload,
+            runner=lambda: _unexpected_runner(),
+        )
+    assert restored == payload
+
+
+@pytest.mark.asyncio
+async def test_hard_delete_documents_removes_external_receipt_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    await _seed(tmp_path)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path / "uploads"))
+    monkeypatch.setattr(settings, "ingest_receipt_inline_max_bytes", 64)
+
+    async with AsyncSessionLocal() as session:
+        await write_receipt(
+            session,
+            job_id="job-id",
+            step="embed_batch",
+            key="job-id:embed_batch:delete-test",
+            payload={"vectors": [[0.1, 0.2, 0.3] for _ in range(20)], "count": 20},
+        )
+        await session.commit()
+
+    async with AsyncSessionLocal() as session:
+        receipt = await session.scalar(select(IngestStepReceipt))
+        assert receipt is not None
+        external_path = Path(str(receipt.payload_json["path"]))
+        assert external_path.exists()
+        await hard_delete_documents(session, ["doc-id"])
+        await session.commit()
+    assert not external_path.exists()
+
+
+async def _unexpected_runner() -> dict[str, Any]:
+    raise AssertionError("runner should not be called when idempotent receipt exists")

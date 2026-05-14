@@ -13,13 +13,17 @@ celery_app.conf.update(
     task_default_queue="default",
     task_queues=(
         Queue("default"),
+        Queue("ingest-ocr"),
         Queue("ingest"),
         Queue("rag"),
         Queue("plan"),
         Queue("docx"),
     ),
     task_routes={
-        "ingest.*": {"queue": "ingest"},
+        "ingest.process": {"queue": "ingest-ocr"},
+        "ingest.retry": {"queue": "ingest-ocr"},
+        "ingest.postprocess": {"queue": "ingest"},
+        "ingest.dead_letter_handler": {"queue": "ingest"},
         "rag.*": {"queue": "rag"},
         "plan.*": {"queue": "plan"},
         "docx.*": {"queue": "docx"},

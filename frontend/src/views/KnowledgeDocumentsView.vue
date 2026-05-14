@@ -40,6 +40,7 @@ import 'element-plus/theme-chalk/el-table-column.css'
 import 'element-plus/theme-chalk/el-tag.css'
 import 'element-plus/theme-chalk/el-upload.css'
 import type { UploadFile as ElementUploadFile, UploadFiles, UploadUserFile } from 'element-plus'
+import { isAxiosError } from 'axios'
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -221,6 +222,18 @@ function clearUploadFiles() {
   uploadPercent.value = 0
 }
 
+function uploadFailureMessage(error: unknown): string {
+  if (isAxiosError(error)) {
+    if (error.response?.status === 413) {
+      return '上传失败：文件总大小超过服务端上传上限'
+    }
+    if (error.code === 'ECONNABORTED') {
+      return '上传失败：请求超时，请检查网络后重试'
+    }
+  }
+  return '上传失败'
+}
+
 async function submitUploadBatch() {
   const files = queuedUploadFiles.value
   if (files.length === 0) {
@@ -259,8 +272,8 @@ async function submitUploadBatch() {
     }
     clearUploadFiles()
     await loadDocuments()
-  } catch {
-    ElMessage.error('上传失败')
+  } catch (error) {
+    ElMessage.error(uploadFailureMessage(error))
   } finally {
     uploading.value = false
     uploadPercent.value = 0
