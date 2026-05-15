@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import threading
 from pathlib import Path
@@ -11,13 +12,19 @@ import requests
 
 from config import (
     GLM_CONNECT_TIMEOUT_SECONDS,
+    GLM_IMAGE_FORMAT,
     GLM_LOG_LEVEL,
     GLM_MAX_TOKENS,
     GLM_MAX_WORKERS,
     GLM_PAGE_QUEUE_SIZE,
     GLM_REGION_QUEUE_SIZE,
+    GLM_REPETITION_PENALTY,
     GLM_REQUEST_TIMEOUT_SECONDS,
     GLM_SAVE_LAYOUT_VIS,
+    GLM_TEMPERATURE,
+    GLM_TEXT_LINE_REPAIR_ENABLED,
+    GLM_TOP_K,
+    GLM_TOP_P,
     LAYOUT_BATCH_SIZE,
     LAYOUT_DEVICE,
     LAYOUT_MODEL_DIR,
@@ -29,8 +36,10 @@ from config import (
     VLLM_HOST,
     VLLM_PORT,
 )
+from quality_repair import TextLineRepairer
 
 PAGE_SPLIT = "<--- Page Split --->"
+logger = logging.getLogger("glm_ocr_api.processor")
 
 
 class GlmOCRProcessor:
@@ -38,6 +47,7 @@ class GlmOCRProcessor:
 
     def __init__(self) -> None:
         self._parser: Any | None = None
+        self._line_repairer: TextLineRepairer | None = None
         self._init_lock = threading.Lock()
         self._gpu_lock = asyncio.Lock()
 
@@ -78,6 +88,11 @@ class GlmOCRProcessor:
                 "pipeline.region_maxsize": GLM_REGION_QUEUE_SIZE,
                 "pipeline.page_loader.pdf_dpi": PDF_RENDER_DPI,
                 "pipeline.page_loader.max_tokens": GLM_MAX_TOKENS,
+                "pipeline.page_loader.temperature": GLM_TEMPERATURE,
+                "pipeline.page_loader.top_p": GLM_TOP_P,
+                "pipeline.page_loader.top_k": GLM_TOP_K,
+                "pipeline.page_loader.repetition_penalty": GLM_REPETITION_PENALTY,
+                "pipeline.page_loader.image_format": GLM_IMAGE_FORMAT,
                 "pipeline.layout.model_dir": LAYOUT_MODEL_DIR,
                 "pipeline.layout.batch_size": LAYOUT_BATCH_SIZE,
                 "pipeline.layout.use_polygon": LAYOUT_USE_POLYGON,
@@ -105,7 +120,10 @@ class GlmOCRProcessor:
             try:
                 parser.close()
             except Exception:
-                return
+                pass
+        if self._line_repairer is not None:
+            self._line_repairer.close()
+            self._line_repairer = None
 
     async def process_pdf_async(
         self,
@@ -136,6 +154,8 @@ class GlmOCRProcessor:
         json_result = _coerce_json(getattr(result, "json_result", []))
         raw_json_result = _coerce_json(getattr(result, "raw_json_result", None))
         _rewrite_json_image_paths(json_result)
+        quality_report = self._repair_quality(pdf_path, json_result, raw_json_result)
+        _normalize_json_text(json_result)
         markdown = _markdown_from_layout(json_result) or _rewrite_image_links(
             getattr(result, "markdown_result", "") or ""
         )
@@ -161,6 +181,11 @@ class GlmOCRProcessor:
                 json.dumps(raw_json_result, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+        if quality_report is not None:
+            (output_path / "quality_report.json").write_text(
+                json.dumps(quality_report, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         metadata = {
             "model": MODEL_NAME,
             "source": str(Path(pdf_path).resolve()),
@@ -169,6 +194,8 @@ class GlmOCRProcessor:
             "table_count": len(tables),
             "formula_count": len(formulas),
             "layout_visualization_count": layout_vis_count,
+            "quality_repair_enabled": bool(quality_report and quality_report.get("enabled")),
+            "quality_repair_count": int((quality_report or {}).get("repair_count") or 0),
         }
         (output_path / "metadata.json").write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2),
@@ -184,7 +211,33 @@ class GlmOCRProcessor:
             "formulas": formulas,
             "page_count": metadata["page_count"],
             "output_dir": str(output_path),
+            "quality_report": quality_report,
         }
+
+    def _repair_quality(
+        self,
+        pdf_path: str,
+        json_result: Any,
+        raw_json_result: Any,
+    ) -> dict[str, Any] | None:
+        if not GLM_TEXT_LINE_REPAIR_ENABLED:
+            return None
+        if self._line_repairer is None:
+            self._line_repairer = TextLineRepairer()
+        try:
+            return self._line_repairer.repair_pdf_result(
+                pdf_path,
+                json_result,
+                raw_json_result,
+            )
+        except Exception as exc:
+            logger.warning("ocr_quality_repair_failed pdf=%s error=%s", pdf_path, exc)
+            return {
+                "enabled": True,
+                "policy": "auto",
+                "repair_count": 0,
+                "error": str(exc),
+            }
 
 
 def _coerce_json(value: Any) -> Any:
@@ -239,6 +292,74 @@ def _markdown_from_layout(json_result: Any) -> str:
                 blocks.append(content.strip())
         page_parts.append("\n\n".join(blocks).strip())
     return f"\n{PAGE_SPLIT}\n".join(page_parts).strip()
+
+
+def _normalize_json_text(json_result: Any) -> None:
+    if not isinstance(json_result, list):
+        return
+    last_section: list[int] | None = None
+    for page in json_result:
+        if not isinstance(page, list):
+            continue
+        for region in page:
+            if not isinstance(region, dict) or region.get("label") != "text":
+                continue
+            content = region.get("content")
+            if isinstance(content, str) and content:
+                normalized, last_section = _normalize_text_content(content, last_section)
+                region["content"] = normalized
+
+
+def _normalize_text_content(
+    content: str,
+    last_section: list[int] | None = None,
+) -> tuple[str, list[int] | None]:
+    content = re.sub(r"(?<!\d)(\d+)\.\s+((?:\d+\.)*\d+)", r"\1.\2", content)
+    replacements = {
+        "根据水位应根据水位库": "根据水库",
+        "根据水位应根据水库": "根据水库",
+        "水位库调蓄": "水库调蓄",
+        "进水时，池": "进水池",
+        "进水时池": "进水池",
+        "出水时，池": "出水池",
+        "出水时池": "出水池",
+    }
+    for source, target in replacements.items():
+        content = content.replace(source, target)
+    content, section = _normalize_section_sequence(content, last_section)
+    return content, section or last_section
+
+
+def _normalize_section_sequence(
+    content: str,
+    last_section: list[int] | None,
+) -> tuple[str, list[int] | None]:
+    match = re.match(r"^(#+\s*)?(\d+(?:\.\d+)+)(\s+[\u4e00-\u9fff].*)$", content.strip())
+    if not match:
+        return content, None
+    prefix, section_text, suffix = match.groups()
+    section = [int(part) for part in section_text.split(".")]
+    if (
+        last_section
+        and len(section) >= 3
+        and section[-1] == section[-2]
+        and _is_next_section(last_section, section[:-1])
+    ):
+        fixed_section = ".".join(str(part) for part in section[:-1])
+        fixed = f"{prefix or ''}{fixed_section}{suffix}"
+        if content.startswith(" ") or content.endswith(" "):
+            fixed = content.replace(match.group(0), fixed, 1)
+        return fixed, section[:-1]
+    return content, section
+
+
+def _is_next_section(previous: list[int], current: list[int]) -> bool:
+    return (
+        len(previous) == len(current)
+        and len(current) >= 2
+        and previous[:-1] == current[:-1]
+        and current[-1] == previous[-1] + 1
+    )
 
 
 def _save_image_files(

@@ -326,6 +326,31 @@ def test_build_prompt_includes_recent_history() -> None:
     assert "助手: 总则里提到了安全责任制。" in prompt[1]["content"]
 
 
+def test_build_prompt_guides_engineering_formula_calculations() -> None:
+    state = rag_graph.RagState(kb_id="kb", raw_query="按规范计算承载力", user_id="u", k=1)
+    state.citations = [
+        CitationMeta(
+            index=1,
+            chunk_id="c",
+            document_id="d",
+            document_title="文档",
+            knowledge_base_id="kb",
+            section_path=["计算"],
+            section_text="承载力应按 N = fA 计算。",
+            page_start=9,
+            page_end=9,
+            bbox=None,
+            snippet="N = fA",
+            score=0.9,
+        )
+    ]
+    prompt = rag_graph.build_prompt(state)
+    assert "known values with units" in prompt[0]["content"]
+    assert "display `$$...$$`" in prompt[0]["content"]
+    assert "依据与适用条件" in prompt[1]["content"]
+    assert "缺失参数" in prompt[1]["content"]
+
+
 def test_contextualize_query_uses_recent_history(monkeypatch: pytest.MonkeyPatch) -> None:
     captured_messages: list[dict[str, Any]] = []
 

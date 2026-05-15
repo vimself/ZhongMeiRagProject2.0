@@ -81,10 +81,12 @@ DashScope 流式生成、无命中兜底、会话历史、引用预览 token 重
    ```
 6. 任意环节失败 → `event: error` `{ "message": "…" }`。
 
-`kb_id="__all__"` 为前端“全部知识库”虚拟选项，后端会解析为当前用户可访问的全部启用知识库：
+`kb_id="__all__"` 为后端保留的跨知识库检索范围，后端会解析为当前用户可访问的全部启用知识库：
 管理员包含所有启用知识库，普通用户仅包含授予 `viewer/editor/owner` 权限的知识库。
 跨库问答会话的 `knowledge_base_id` 存为 `null`，引用仍保留各自真实
 `knowledge_base_id`。
+2026-05-15 起 `/chat` 前端先隐藏“全部知识库”下拉选项，仅允许用户从具体知识库发起新问答；
+后端 `__all__` 能力和历史跨库会话兼容逻辑不变。
 
 `ChatCitation` 字段（12 项）：
 
@@ -145,16 +147,17 @@ bbox{x,y,width,height}, snippet, score, preview_url, download_url
     `/api/v2/pdf/sign` 签发短时 token，最终跳转到
     `/api/v2/pdf/preview?document_id=...&token=...#page=N`，使用浏览器原生
     PDF 阅读器预览，避免聊天页自定义 PDF 组件状态影响。
-  - `MessageList` 会把常见 OCR/LaTeX 片段（如 `$5^{\circ}C \sim 35^{\circ}C$`）
-    转为面向用户的 `5°C 至 35°C` 形式，再按 Markdown 渲染。
+  - `MessageList` 使用 Markdown + KaTeX 渲染 `$...$`、`$$...$$`、`\(...\)`、
+    `\[...\]` 公式；简单温度范围等 OCR 噪声由后端提示词规范化为自然中文，
+    真实公式保留为可渲染 LaTeX，避免在回答中直接露出原始 Markdown/LaTeX 片段。
 - 状态管理：`stores/chat.ts`（Pinia），含
   `sessions/activeSessionId/activeKbId/messages/latestReferences/
   streaming/error/abortController`。`sendQuestion` 通过
   `@microsoft/fetch-event-source` 打开 SSE，支持 `stop` 中断；前端以
   `done` / `error` SSE 事件作为业务终态，收到后立即释放 `streaming`
   生成锁并主动中断当前 SSE，避免浏览器连接未及时收尾导致无法新建对话或继续提问。
-- 知识库下拉包含“全部知识库”选项，发送 `kb_id="__all__"`，用于把当前用户
-  可访问的所有启用知识库纳入同一次 RAG 检索与回答。
+- 知识库下拉当前仅展示具体知识库；`kb_id="__all__"` 跨库问答能力仍保留在后端，
+  但前端入口先隐藏，避免用户在知识边界不明确时发起跨库计算类问答。
 - 视觉语言：白色/off-white 背景（`#FAFAF9` / `#FFFFFF`）、细灰边框
   `#E5E7EB`、主色 `#0F766E`（teal）、文字 `#111827`/`#6B7280`、
   克制阴影、不使用紫色 AI 渐变，移动端 `<880px` 退化为单列，
@@ -179,7 +182,18 @@ CHAT_NO_HIT_MESSAGE=无法在知识库中找到依据，建议换个问法或先
 
 - 后端：`sse-starlette` ^2.1,<3。
 - 前端：`@microsoft/fetch-event-source` ^2.0.1、`markdown-it` ^14.1.0、
-  `@types/markdown-it` ^14.1.2、`dompurify`。
+  `@types/markdown-it` ^14.1.2、`dompurify`、`katex`。
+
+## 2026-05-15 公式计算问答优化
+
+- RAG 生成提示词新增工程计算模式：涉及公式、参数选择、工程计算时，按
+  “依据与适用条件 → 已知量 → 公式 → 代入计算 → 结果与校核”组织答案。
+- 对缺少公式、变量、系数、单位、边界条件或适用范围的计算题，模型必须指出缺失项，
+  不允许根据经验补造参数。
+- 公式输出要求使用 KaTeX 兼容 LaTeX：行内 `$...$`、块级 `$$...$$`，
+  并用中文解释变量含义；简单 OCR 噪声和范围值可转成自然中文。
+- `/chat` 前端隐藏“全部知识库”选项，减少跨库证据混用对规范计算题的干扰；
+  后端跨库能力不删除，保留历史会话和后续恢复入口的兼容性。
 
 > 未引入 LangGraph 运行时：Stage 7 使用手写的 async 节点 pipeline，
 > `graph.py` 中保留了与 LangGraph 概念一致的可单测节点签名，便于后续

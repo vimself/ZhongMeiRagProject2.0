@@ -36,8 +36,9 @@ import 'element-plus/theme-chalk/el-tag.css'
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { listAuditLogs, listUsers } from '@/api/admin'
+import { listAuditLogs } from '@/api/admin'
 import {
+  adminListPermissionCandidates,
   adminListKnowledgeBases,
   adminListPermissions,
   adminUpdatePermissions,
@@ -229,9 +230,11 @@ async function handleDelete(kb: KnowledgeBaseOut) {
 async function openPermDrawer(kb: KnowledgeBaseOut) {
   permKbId.value = kb.id
   permKbName.value = kb.name
+  permissions.value = []
+  permForm.value = []
+  allUsers.value = []
   permDrawerVisible.value = true
-  await loadPermissions()
-  await loadAllUsers()
+  await Promise.all([loadPermissions(), loadPermissionCandidates()])
 }
 
 async function loadPermissions() {
@@ -254,10 +257,10 @@ async function loadPermissions() {
   }
 }
 
-async function loadAllUsers() {
+async function loadPermissionCandidates() {
   try {
-    const resp = await listUsers({ page: 1, page_size: 100, is_active: true })
-    mergePermissionUsers(resp.data.items)
+    const resp = await adminListPermissionCandidates(permKbId.value)
+    mergePermissionUsers(resp.data)
   } catch {
     ElMessage.warning('候选用户列表加载失败，已保留当前权限成员')
   }
@@ -496,7 +499,13 @@ onMounted(loadKBs)
         <div v-if="permForm.length === 0 && !permLoading" class="perm-empty">暂无权限记录</div>
         <div v-else class="perm-list">
           <div v-for="(item, index) in permForm" :key="index" class="perm-row">
-            <ElSelect v-model="item.user_id" filterable placeholder="选择用户" style="flex: 1">
+            <ElSelect
+              v-model="item.user_id"
+              :teleported="false"
+              filterable
+              placeholder="选择用户"
+              style="flex: 1"
+            >
               <ElOption
                 v-for="u in availableUsers(index)"
                 :key="u.id"
@@ -504,7 +513,7 @@ onMounted(loadKBs)
                 :value="u.id"
               />
             </ElSelect>
-            <ElSelect v-model="item.role" style="width: 120px">
+            <ElSelect v-model="item.role" :teleported="false" style="width: 120px">
               <ElOption label="所有者" value="owner" />
               <ElOption label="编辑者" value="editor" />
               <ElOption label="查看者" value="viewer" />

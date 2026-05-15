@@ -11,9 +11,15 @@ VLLM_PORT="${GLM_VLLM_PORT:-18080}"
 VLLM_LIMIT_MM_PER_PROMPT="${GLM_VLLM_LIMIT_MM_PER_PROMPT:-}"
 VLLM_MAX_NUM_BATCHED_TOKENS="${GLM_VLLM_MAX_NUM_BATCHED_TOKENS:-16384}"
 VLLM_MAX_NUM_SEQS="${GLM_VLLM_MAX_NUM_SEQS:-1}"
+VLLM_ENFORCE_EAGER="${GLM_VLLM_ENFORCE_EAGER:-1}"
+VLLM_DISABLE_CUSTOM_ALL_REDUCE="${GLM_VLLM_DISABLE_CUSTOM_ALL_REDUCE:-1}"
+VLLM_SPECULATIVE_CONFIG="${GLM_VLLM_SPECULATIVE_CONFIG:-}"
 VLLM_DISABLE_LOG_REQUESTS="${GLM_VLLM_DISABLE_LOG_REQUESTS:-1}"
 VLLM_DISABLE_LOG_STATS="${GLM_VLLM_DISABLE_LOG_STATS:-1}"
 VLLM_LOGGING_LEVEL="${VLLM_LOGGING_LEVEL:-WARNING}"
+LOG_FILTER_SCRIPT="${API_ROOT}/log_filter.py"
+LOG_FILTER_NCCL_BROKEN_PIPE="${GLM_LOG_FILTER_NCCL_BROKEN_PIPE:-1}"
+LOG_FILTER_SUMMARY_INTERVAL_SECONDS="${GLM_LOG_FILTER_SUMMARY_INTERVAL_SECONDS:-600}"
 API_HOST="${API_HOST:-0.0.0.0}"
 API_PORT="${API_PORT:-8899}"
 API_LOG_LEVEL="${API_LOG_LEVEL:-info}"
@@ -29,6 +35,9 @@ mkdir -p "${LOG_DIR}" "${RUN_DIR}"
 
 source /home/ubuntu/anaconda3/etc/profile.d/conda.sh
 conda activate glm-ocr
+export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
+export GLM_LOG_FILTER_NCCL_BROKEN_PIPE="${LOG_FILTER_NCCL_BROKEN_PIPE}"
+export GLM_LOG_FILTER_SUMMARY_INTERVAL_SECONDS="${LOG_FILTER_SUMMARY_INTERVAL_SECONDS}"
 
 echo "GLM-OCR service starting..."
 if command -v nvidia-smi >/dev/null 2>&1; then
@@ -53,6 +62,20 @@ except Exception:
 PY
 }
 
+start_filtered() {
+  local source="$1"
+  local log_file="$2"
+  shift 2
+  setsid nohup bash -c '
+    source_name="$1"
+    log_file="$2"
+    filter_script="$3"
+    shift 3
+    "$@" 2>&1 | python "${filter_script}" --source "${source_name}" >> "${log_file}"
+  ' bash "${source}" "${log_file}" "${LOG_FILTER_SCRIPT}" "$@" >/dev/null 2>&1 &
+  echo "$!"
+}
+
 if ! is_vllm_ready; then
   export VLLM_LOGGING_LEVEL="${VLLM_LOGGING_LEVEL}"
   VLLM_ARGS=(
@@ -66,6 +89,12 @@ if ! is_vllm_ready; then
     --max-num-batched-tokens "${VLLM_MAX_NUM_BATCHED_TOKENS}"
     --max-num-seqs "${VLLM_MAX_NUM_SEQS}"
   )
+  if [[ "${VLLM_ENFORCE_EAGER}" == "1" ]]; then
+    VLLM_ARGS+=(--enforce-eager)
+  fi
+  if [[ "${VLLM_DISABLE_CUSTOM_ALL_REDUCE}" == "1" ]]; then
+    VLLM_ARGS+=(--disable-custom-all-reduce)
+  fi
   if [[ "${VLLM_DISABLE_LOG_REQUESTS}" == "1" ]]; then
     VLLM_ARGS+=(--no-enable-log-requests --disable-uvicorn-access-log)
   fi
@@ -75,11 +104,11 @@ if ! is_vllm_ready; then
   if [[ -n "${VLLM_LIMIT_MM_PER_PROMPT}" ]]; then
     VLLM_ARGS+=(--limit-mm-per-prompt "${VLLM_LIMIT_MM_PER_PROMPT}")
   fi
-  if [[ -n "${GLM_VLLM_SPECULATIVE_CONFIG:-{\"method\":\"mtp\",\"num_speculative_tokens\":3}}" ]]; then
-    VLLM_ARGS+=(--speculative-config "${GLM_VLLM_SPECULATIVE_CONFIG:-{\"method\":\"mtp\",\"num_speculative_tokens\":3}}")
+  if [[ -n "${VLLM_SPECULATIVE_CONFIG}" ]]; then
+    VLLM_ARGS+=(--speculative-config "${VLLM_SPECULATIVE_CONFIG}")
   fi
-  setsid nohup "${VLLM_ARGS[@]}" >> "${VLLM_LOG_FILE}" 2>&1 &
-  echo "$!" > "${RUN_DIR}/vllm.pid"
+  echo "vLLM conservative mode: enforce_eager=${VLLM_ENFORCE_EAGER}, disable_custom_all_reduce=${VLLM_DISABLE_CUSTOM_ALL_REDUCE}, speculative_config=${VLLM_SPECULATIVE_CONFIG:-disabled}"
+  start_filtered vllm "${VLLM_LOG_FILE}" "${VLLM_ARGS[@]}" > "${RUN_DIR}/vllm.pid"
   echo "vLLM PID: $(cat "${RUN_DIR}/vllm.pid")"
   echo "vLLM log: ${VLLM_LOG_FILE}"
 else
@@ -124,8 +153,7 @@ API_ARGS=(
 if [[ "${API_ACCESS_LOG}" != "1" ]]; then
   API_ARGS+=(--no-access-log)
 fi
-setsid nohup "${API_ARGS[@]}" >> "${API_LOG_FILE}" 2>&1 &
-echo "$!" > "${RUN_DIR}/api.pid"
+start_filtered api "${API_LOG_FILE}" "${API_ARGS[@]}" > "${RUN_DIR}/api.pid"
 
 echo "GLM-OCR API PID: $(cat "${RUN_DIR}/api.pid")"
 echo "API log: ${API_LOG_FILE}"

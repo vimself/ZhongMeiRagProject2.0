@@ -41,6 +41,8 @@ logs/
 tmp/
 *.log
 .cache/
+GlmOcrApi/ocrtest/output/
+GlmOcrApi/ocrtest/*.pdf
 
 # Local database / compose overrides
 *.db

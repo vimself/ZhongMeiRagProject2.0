@@ -13,7 +13,13 @@ stop_pid_file() {
     pid="$(cat "${file}")"
     if [[ -n "${pid}" ]] && kill -0 "${pid}" >/dev/null 2>&1; then
       echo "Stopping ${label} PID ${pid}"
-      kill "${pid}" || true
+      local pgid
+      pgid="$(ps -o pgid= -p "${pid}" 2>/dev/null | tr -d ' ' || true)"
+      if [[ -n "${pgid}" ]]; then
+        kill -- "-${pgid}" || true
+      else
+        kill "${pid}" || true
+      fi
     fi
     rm -f "${file}"
   fi

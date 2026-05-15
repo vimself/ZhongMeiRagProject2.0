@@ -51,12 +51,12 @@ origin=https://github.com/vimself/ZhongMeiRagProject2.0.git
 ## 核心架构
 
 - **入库链路**：Celery 拆分 `ingest-ocr` 与 `ingest` 队列。`worker-ingest-ocr` 默认单并发、`prefetch=1`，只负责 OCR 上传/轮询/拉取结果，保护 GLM-OCR/vLLM 质量和稳定性；OCR 完成后投递 `ingest.postprocess` 到 `worker-ingest`，由后处理队列并发执行章节解析、切片、embedding、Track A/B、资产登记和 finalize。这样批量上传时后端正在 embedding/向量入库，OCR 队列也能继续处理下一份文档。
-- **OCR 解析**：GLM-OCR 官方 self-hosted pipeline 负责 PDF 页面渲染、PP-DocLayoutV3 版面检测、区域识别、Markdown 分页输出、图片裁剪和 JSON 版面信息；后端 `GlmOCRClient` 保持上传-轮询-下载协议，OCR/vLLM 短时不可用按临时异常退避重试。
+- **OCR 解析**：GLM-OCR 官方 self-hosted pipeline 负责 PDF 页面渲染、PP-DocLayoutV3 版面检测、区域识别、Markdown 分页输出、图片裁剪和 JSON 版面信息；`GlmOcrApi` 在官方结果后追加文本质量修复，针对扫描水印 PDF 的长输出重复、公式标记异常和多行编号条文，按深色文字投影切行为短图逐行重识别，输出 `quality_report.json` 并在 `metadata.json` 记录修复次数；后端 `GlmOCRClient` 保持上传-轮询-下载协议，OCR/vLLM 短时不可用按临时异常退避重试；`GlmOcrApi/start.sh` 默认过滤 PyTorch/NCCL TCPStore `Broken pipe` 心跳噪声，保留 vLLM/API warning/error 和 OCR 任务级关键日志；日志过滤通过持久 `nohup bash` 管道 wrapper 启动，`stop.sh` 按进程组停止，禁止改回会在父脚本退出后关闭过滤器的 process substitution。
 - **页索引保护**：`knowledge_page_index_v2.text` 是辅助页级索引，默认按 `INGEST_PAGE_INDEX_TEXT_MAX_BYTES=49152` 做 UTF-8 安全截断；完整 RAG 证据以 `knowledge_chunks_v2` 切片为准
 - **入库前端状态**：正常流转统一展示为排队、OCR、Embedding、向量入库、完成；失败仅作为异常状态显示
-- **RAG 检索**：Track A 向量召回 + Track B BM25/稀疏召回 + RRF 融合（K=60）+ `qwen3-rerank`；`/chat` 支持单知识库和 `kb_id="__all__"` 全部知识库问答，后端按当前用户权限展开为可访问的全部启用知识库
+- **RAG 检索**：Track A 向量召回 + Track B BM25/稀疏召回 + RRF 融合（K=60）+ `qwen3-rerank`；`/chat` 后端支持单知识库和 `kb_id="__all__"` 全部知识库问答，后端按当前用户权限展开为可访问的全部启用知识库；当前前端先隐藏“全部知识库”下拉选项，仅展示具体知识库
 - **RAG Graph**：plan_query→contextualize_query→retrieve_track_a/b→rrf_fusion→rerank→dedupe→should_answer→generate_stream→rewrite→persist
-- **LLM**：DashScope qwen3-vl-embedding（embedding）、qwen3.6-plus（聊天/历史感知 query rewrite）、`qwen3-rerank`（重排序），429 降级 qwen3-turbo
+- **LLM**：DashScope qwen3-vl-embedding（embedding）、qwen3.6-plus（聊天/历史感知 query rewrite）、`qwen3-rerank`（重排序），429 降级 qwen3-turbo；公式/工程计算类问答要求按依据与适用条件、已知量、公式、代入计算、结果与校核组织，缺失参数时明确说明并禁止补造
 - **搜索服务**：复用 Retriever，跨 KB 串行聚合
 - **导出**：Celery 异步任务，生成 JSON/CSV + metadata ZIP
 
@@ -70,9 +70,10 @@ origin=https://github.com/vimself/ZhongMeiRagProject2.0.git
 
 ## 前端规范
 
-- 聊天三栏布局：MessageList / Composer / CitationPane；知识库下拉包含“全部知识库”虚拟选项，用于跨当前用户可访问的所有启用知识库检索
+- 聊天三栏布局：MessageList / Composer / CitationPane；知识库下拉当前仅展示具体知识库，“全部知识库”虚拟选项后端能力保留但前端入口先隐藏
 - 引用展示：回答框参考文档 + 右侧证据面板，无命中不展示；引用按相关度 `score` 降序展示，两个区域保持同一顺序
 - 聊天引用跳转：点击右侧参考文档详情直接新开 `/api/v2/pdf/preview?...#page={page_start}`，不在 `/chat` 内嵌预览窗口
+- 聊天公式渲染：回答正文使用 Markdown + KaTeX 渲染 `$...$`、`$$...$$`、`\(...\)`、`\[...\]` 公式，避免直接展示原始 LaTeX/Markdown 片段
 - PDF 预览：pdfjs-dist + bbox 高亮覆层
 - 视觉风格：白色极简 RAG 工作台，主色 teal `#0F766E`，禁止紫色渐变
 
@@ -92,6 +93,11 @@ RAG_RERANK_ENABLED
 RAG_RERANK_MAX_CANDIDATES
 EXPORT_DIR
 UPLOAD_MAX_FILES
+GLM_TEXT_LINE_REPAIR_ENABLED
+GLM_TEXT_LINE_REPAIR_POLICY
+GLM_TEXT_LINE_REPAIR_MAX_LINES
+GLM_TEXT_LINE_REPAIR_MAX_REGIONS_PER_PAGE
+GLM_TEXT_LINE_REPAIR_MAX_TOKENS
 ```
 
 ## 审计 Action

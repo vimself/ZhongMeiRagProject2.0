@@ -20,6 +20,7 @@
     "dompurify": "^3.4.2",
     "echarts": "^6.0.0",
     "element-plus": "^2.9.1",
+    "katex": "^0.16.46",
     "markdown-it": "^14.1.0",
     "pdfjs-dist": "^4.9.155",
     "pinia": "^2.3.0",

@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import DOMPurify from 'dompurify'
+import katex from 'katex'
 import MarkdownIt from 'markdown-it'
 import { computed } from 'vue'
+import 'katex/dist/katex.min.css'
 
 import { formatCitationReference, orderedCitations } from '@/features/chat/citationDisplay'
 import type { LocalChatMessage } from '@/stores/chat'
@@ -17,33 +19,192 @@ const md = new MarkdownIt({
   breaks: true,
 })
 
-function plainMath(expr: string): string {
-  return expr
-    .replace(/\\text\{([^}]*)\}/g, '$1')
-    .replace(/\^\{\\circ\}\s*([CF])?/gi, '°$1')
-    .replace(/\\circ\s*([CF])?/gi, '°$1')
-    .replace(/\\sim/g, ' 至 ')
-    .replace(/\\leq?/g, '≤')
-    .replace(/\\geq?/g, '≥')
-    .replace(/\\times/g, '×')
-    .replace(/\\cdot/g, '·')
-    .replace(/\\pm/g, '±')
-    .replace(/\\%/g, '%')
-    .replace(/\^\{([^}]*)\}/g, '^$1')
-    .replace(/_\{([^}]*)\}/g, '_$1')
-    .replace(/[{}]/g, '')
-    .replace(/\\([a-zA-Z]+)/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim()
+interface MathToken {
+  block: boolean
+  content: string
+  map: [number, number] | null
+  markup: string
+  meta?: {
+    displayMode?: boolean
+  }
 }
 
-function normalizeMath(content: string): string {
-  return content
-    .replace(/\$\$([\s\S]*?)\$\$/g, (_, expr: string) => plainMath(expr))
-    .replace(/\$([^$\n]+)\$/g, (_, expr: string) => plainMath(expr))
-    .replace(/\\\(([\s\S]*?)\\\)/g, (_, expr: string) => plainMath(expr))
-    .replace(/\\\[([\s\S]*?)\\\]/g, (_, expr: string) => plainMath(expr))
+interface MathInlineState {
+  pos: number
+  src: string
+  push(type: string, tag: string, nesting: number): MathToken
 }
+
+interface MathBlockState {
+  bMarks: number[]
+  eMarks: number[]
+  line: number
+  src: string
+  tShift: number[]
+  push(type: string, tag: string, nesting: number): MathToken
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function isEscaped(src: string, index: number): boolean {
+  let slashCount = 0
+  for (let cursor = index - 1; cursor >= 0 && src[cursor] === '\\'; cursor -= 1) {
+    slashCount += 1
+  }
+  return slashCount % 2 === 1
+}
+
+function findClosingDollar(src: string, from: number): number {
+  for (let cursor = from; cursor < src.length; cursor += 1) {
+    if (src[cursor] === '$' && src[cursor + 1] !== '$' && !isEscaped(src, cursor)) {
+      return cursor
+    }
+  }
+  return -1
+}
+
+function findClosingSequence(src: string, delimiter: string): number {
+  let cursor = 0
+  while (cursor < src.length) {
+    const found = src.indexOf(delimiter, cursor)
+    if (found < 0) return -1
+    if (delimiter !== '$$' || !isEscaped(src, found)) return found
+    cursor = found + delimiter.length
+  }
+  return -1
+}
+
+function hasLikelyMathContent(expr: string): boolean {
+  const content = expr.trim()
+  return (
+    content.length > 0 &&
+    /\\[a-zA-Z]+|[=<>^_{}]|[+\-*/×÷]|[≤≥≈≠∑∫√]|[A-Za-z]\s*\(|\d\s*[A-Za-z%°]/.test(content)
+  )
+}
+
+function renderMath(expr: string, displayMode: boolean): string {
+  const content = expr.trim()
+  try {
+    return katex.renderToString(content, {
+      displayMode,
+      output: 'html',
+      strict: 'ignore',
+      throwOnError: false,
+      trust: false,
+    })
+  } catch {
+    return `<code class="math-fallback">${escapeHtml(content)}</code>`
+  }
+}
+
+function pushMathToken(
+  state: MathInlineState,
+  expr: string,
+  displayMode: boolean,
+  markup: string,
+): void {
+  const token = state.push('math_inline', 'math', 0)
+  token.content = expr
+  token.markup = markup
+  token.meta = { displayMode }
+}
+
+function mathInlineRule(state: MathInlineState, silent: boolean): boolean {
+  const start = state.pos
+  const src = state.src
+
+  if (src.startsWith('\\(', start) || src.startsWith('\\[', start)) {
+    const displayMode = src.startsWith('\\[', start)
+    const close = displayMode ? '\\]' : '\\)'
+    const end = src.indexOf(close, start + 2)
+    if (end < 0) return false
+    const expr = src.slice(start + 2, end)
+    if (!hasLikelyMathContent(expr)) return false
+    if (!silent) pushMathToken(state, expr, displayMode, displayMode ? '\\[\\]' : '\\(\\)')
+    state.pos = end + close.length
+    return true
+  }
+
+  if (src[start] !== '$' || src[start + 1] === '$' || isEscaped(src, start)) return false
+  if (!src[start + 1] || /\s/.test(src[start + 1])) return false
+  const end = findClosingDollar(src, start + 1)
+  if (end < 0 || /\s/.test(src[end - 1])) return false
+  const expr = src.slice(start + 1, end)
+  if (!hasLikelyMathContent(expr)) return false
+  if (!silent) pushMathToken(state, expr, false, '$')
+  state.pos = end + 1
+  return true
+}
+
+function mathBlockRule(
+  state: MathBlockState,
+  startLine: number,
+  endLine: number,
+  silent: boolean,
+): boolean {
+  const start = state.bMarks[startLine] + state.tShift[startLine]
+  const max = state.eMarks[startLine]
+  const firstLine = state.src.slice(start, max).trim()
+  const delimiter = firstLine.startsWith('$$') ? '$$' : firstLine.startsWith('\\[') ? '\\]' : ''
+  if (!delimiter) return false
+
+  const openLength = delimiter === '$$' ? 2 : 2
+  const contentLines: string[] = []
+  const firstContent = firstLine.slice(openLength)
+  const firstClose = findClosingSequence(firstContent, delimiter)
+  let nextLine = startLine + 1
+  let foundClose = firstClose >= 0
+
+  if (foundClose) {
+    contentLines.push(firstContent.slice(0, firstClose))
+  } else {
+    contentLines.push(firstContent)
+    for (; nextLine < endLine; nextLine += 1) {
+      const lineStart = state.bMarks[nextLine] + state.tShift[nextLine]
+      const lineMax = state.eMarks[nextLine]
+      const line = state.src.slice(lineStart, lineMax)
+      const closeIndex = findClosingSequence(line, delimiter)
+      if (closeIndex >= 0) {
+        contentLines.push(line.slice(0, closeIndex))
+        nextLine += 1
+        foundClose = true
+        break
+      }
+      contentLines.push(line)
+    }
+  }
+
+  const expr = contentLines.join('\n').trim()
+  if (!foundClose || !hasLikelyMathContent(expr)) return false
+  if (silent) return true
+
+  const token = state.push('math_block', 'math', 0)
+  token.block = true
+  token.content = expr
+  token.markup = delimiter === '$$' ? '$$' : '\\[\\]'
+  token.map = [startLine, nextLine]
+  state.line = nextLine
+  return true
+}
+
+md.inline.ruler.before('text', 'math_inline', mathInlineRule)
+md.block.ruler.before('fence', 'math_block', mathBlockRule, {
+  alt: ['paragraph', 'reference', 'blockquote', 'list'],
+})
+md.renderer.rules.math_inline = (tokens, idx) => {
+  const displayMode = Boolean(tokens[idx].meta?.displayMode)
+  const className = displayMode ? 'math-display math-display--inline' : 'math-inline'
+  return `<span class="${className}">${renderMath(tokens[idx].content, displayMode)}</span>`
+}
+md.renderer.rules.math_block = (tokens, idx) =>
+  `<div class="math-display">${renderMath(tokens[idx].content, true)}</div>\n`
 
 function stripReferenceSection(content: string): string {
   const lines = content.split(/\r?\n/)
@@ -54,7 +215,7 @@ function stripReferenceSection(content: string): string {
 }
 
 function normalizeAnswerContent(content: string): string {
-  return normalizeMath(stripReferenceSection(content))
+  return stripReferenceSection(content)
     .replace(/\[cite:\d+\]/g, '')
     .replace(/\^\[\d+\]/g, '')
     .replace(/\[\^\d+\]/g, '')
@@ -409,5 +570,37 @@ const items = computed(() =>
 .markdown-body :deep(th) {
   background: #fafaf9;
   font-weight: 600;
+}
+
+.markdown-body :deep(.math-inline) {
+  display: inline-block;
+  max-width: 100%;
+  overflow: auto hidden;
+  vertical-align: -0.08em;
+  white-space: nowrap;
+}
+
+.markdown-body :deep(.math-display) {
+  display: block;
+  max-width: 100%;
+  margin: 10px 0;
+  padding: 10px 12px;
+  overflow: auto hidden;
+  background: #f8faf9;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.markdown-body :deep(.math-display--inline) {
+  margin: 8px 0;
+}
+
+.markdown-body :deep(.math-display .katex-display) {
+  margin: 0;
+  text-align: left;
+}
+
+.markdown-body :deep(.math-fallback) {
+  white-space: pre-wrap;
 }
 </style>

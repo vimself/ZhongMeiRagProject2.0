@@ -23,3 +23,6 @@
 | [ubuntu-workstation-fresh-deploy-2026-05-13.md](ubuntu-workstation-fresh-deploy-2026-05-13.md) | 2026-05-13 Ubuntu OCR 工作站全新环境上线说明。 |
 | [ocr-ingest-reliability-fix-2026-05-14.md](ocr-ingest-reliability-fix-2026-05-14.md) | 2026-05-14 OCR 截断恢复与入库大回执写库失败修复。 |
 | [docker-data-persistence-2026-05-14.md](docker-data-persistence-2026-05-14.md) | 2026-05-14 Docker 数据持久化目录固定化说明。 |
+| [admin-kb-permission-drawer-fix-2026-05-15.md](admin-kb-permission-drawer-fix-2026-05-15.md) | 2026-05-15 管理端知识库权限抽屉修复。 |
+| [glm-ocr-runtime-stability.md](glm-ocr-runtime-stability.md) | GLM-OCR vLLM/API 运行稳定性与日志降噪说明。 |
+| [glm-ocr-quality-optimization-2026-05-16.md](glm-ocr-quality-optimization-2026-05-16.md) | 2026-05-16 GLM-OCR 扫描件识别质量优化与行级修复。 |

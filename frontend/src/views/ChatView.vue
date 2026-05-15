@@ -52,19 +52,28 @@ const emptyHint = computed(() => {
   return ''
 })
 
+function firstKnowledgeBaseId(): string | null {
+  return kbList.value[0]?.id ?? null
+}
+
+function isVisibleKnowledgeBaseId(kbId: string | null): boolean {
+  return Boolean(kbId && kbList.value.some((kb) => kb.id === kbId))
+}
+
 async function loadKnowledgeBases() {
   loadingKb.value = true
   try {
     const resp = await listKnowledgeBases({ page: 1, page_size: 100 })
     kbList.value = resp.data.items
-    // 若 query 指定 kb_id
+    // “全部知识库”能力保留在后端，当前前端先不暴露为可选入口。
     const kbFromQuery = String(route.query.kb_id || '').trim()
-    if (kbFromQuery === ALL_KNOWLEDGE_BASES_ID) {
-      chat.setKb(ALL_KNOWLEDGE_BASES_ID)
-    } else if (kbFromQuery && kbList.value.some((k) => k.id === kbFromQuery)) {
+    if (kbFromQuery !== ALL_KNOWLEDGE_BASES_ID && isVisibleKnowledgeBaseId(kbFromQuery)) {
       chat.setKb(kbFromQuery)
-    } else if (!chat.activeKbId && kbList.value.length > 0) {
-      chat.setKb(kbList.value[0].id)
+    } else if (
+      chat.activeKbId === ALL_KNOWLEDGE_BASES_ID ||
+      !isVisibleKnowledgeBaseId(chat.activeKbId)
+    ) {
+      chat.setKb(firstKnowledgeBaseId())
     }
   } catch (err) {
     ElMessage.error('知识库列表加载失败：' + (err as Error).message)
@@ -81,12 +90,14 @@ async function scrollToBottom() {
 }
 
 function handleKbChange(id: string) {
+  if (id === ALL_KNOWLEDGE_BASES_ID) return
   chat.setKb(id)
   chat.resetConversation(id)
 }
 
 function handleNewChat() {
-  chat.resetConversation(chat.activeKbId ?? undefined)
+  const kbId = chat.activeKbId === ALL_KNOWLEDGE_BASES_ID ? firstKnowledgeBaseId() : chat.activeKbId
+  chat.resetConversation(kbId ?? undefined)
 }
 
 async function handleSelectSession(sessionId: string) {
@@ -190,7 +201,6 @@ onMounted(async () => {
           class="chat-sidebar__select"
           @change="handleKbChange"
         >
-          <ElOption label="全部知识库" :value="ALL_KNOWLEDGE_BASES_ID" />
           <ElOption v-for="kb in kbList" :key="kb.id" :label="kb.name" :value="kb.id" />
         </ElSelect>
       </section>
