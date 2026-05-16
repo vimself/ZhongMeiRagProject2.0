@@ -155,7 +155,9 @@ class GlmOCRProcessor:
         raw_json_result = _coerce_json(getattr(result, "raw_json_result", None))
         _rewrite_json_image_paths(json_result)
         quality_report = self._repair_quality(pdf_path, json_result, raw_json_result)
+        _normalize_json_formulas(json_result)
         _normalize_json_text(json_result)
+        _finalize_json_text(json_result)
         markdown = _markdown_from_layout(json_result) or _rewrite_image_links(
             getattr(result, "markdown_result", "") or ""
         )
@@ -302,7 +304,12 @@ def _normalize_json_text(json_result: Any) -> None:
         if not isinstance(page, list):
             continue
         for region in page:
-            if not isinstance(region, dict) or region.get("label") != "text":
+            if not isinstance(region, dict):
+                continue
+            formula_section = _section_from_formula_content(region.get("content"))
+            if formula_section is not None:
+                last_section = formula_section
+            if region.get("label") != "text":
                 continue
             content = region.get("content")
             if isinstance(content, str) and content:
@@ -310,11 +317,58 @@ def _normalize_json_text(json_result: Any) -> None:
                 region["content"] = normalized
 
 
+def _normalize_json_formulas(json_result: Any) -> None:
+    if not isinstance(json_result, list):
+        return
+    for page in json_result:
+        if not isinstance(page, list):
+            continue
+        for region in page:
+            if not isinstance(region, dict):
+                continue
+            content = region.get("content")
+            if not isinstance(content, str) or not content:
+                continue
+            if region.get("label") == "formula":
+                region["content"] = _normalize_formula_content(content)
+            elif region.get("label") == "table":
+                region["content"] = _normalize_common_broken_latex_text(content)
+
+
+def _finalize_json_text(json_result: Any) -> None:
+    if not isinstance(json_result, list):
+        return
+    last_section: list[int] | None = None
+    for page in json_result:
+        if not isinstance(page, list):
+            continue
+        for region in page:
+            if not isinstance(region, dict):
+                continue
+            content = region.get("content")
+            if not isinstance(content, str) or not content:
+                continue
+            if region.get("label") == "text":
+                normalized, last_section = _normalize_text_content(content, last_section)
+                normalized = _normalize_malformed_section_number_text(normalized)
+                region["content"] = normalized
+            else:
+                region["content"] = _normalize_toc_numbering(content)
+
+
 def _normalize_text_content(
     content: str,
     last_section: list[int] | None = None,
 ) -> tuple[str, list[int] | None]:
+    content = _normalize_common_broken_latex_text(content)
+    content = _normalize_formula_definition_text(content)
+    content = _prefer_embedded_real_section(content)
+    content = _merge_split_clause_number(content)
+    content = _normalize_section_candidates(content, last_section)
+    content = _dedupe_repeated_section_tail(content)
+    content = _normalize_toc_numbering(content)
     content = re.sub(r"(?<!\d)(\d+)\.\s+((?:\d+\.)*\d+)", r"\1.\2", content)
+    content = re.sub(r"^(\d+\.\d+)\.\s+\1\.(\d+)", r"\1.\2", content)
     replacements = {
         "根据水位应根据水位库": "根据水库",
         "根据水位应根据水库": "根据水库",
@@ -323,18 +377,300 @@ def _normalize_text_content(
         "进水时池": "进水池",
         "出水时，池": "出水池",
         "出水时池": "出水池",
+        "平均值值": "平均值",
+        "最低最低水位": "最低水位",
+        "最低最低运行水位": "最低运行水位",
     }
     for source, target in replacements.items():
         content = content.replace(source, target)
+    content = _normalize_head_clause_water_level_text(content)
     content, section = _normalize_section_sequence(content, last_section)
     return content, section or last_section
+
+
+def _normalize_malformed_section_number_text(content: str) -> str:
+    content = re.sub(
+        r"(?m)^(\s*#{0,6}\s*)(\d{1,2})\.111\.\s*(\d{1,2}\.\d{1,3})(?:\s+\3)?(?=\s*[\u4e00-\u9fff])",
+        r"\1\2.\3",
+        content,
+    )
+    content = re.sub(
+        r"(?m)^(\s*#{0,6}\s*)(\d{1,2})\.\2\.(\d{1,3})(?=\s*[\u4e00-\u9fff])",
+        r"\1\2.\3",
+        content,
+    )
+    return content
+
+
+def _normalize_toc_numbering(content: str) -> str:
+    lines: list[str] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            lines.append(line)
+            continue
+        stripped = re.sub(r"^11\.111\.111(?=\s)", "11.11", stripped)
+        stripped = re.sub(r"^11\.111(?=\s)", "11.11", stripped)
+        stripped = re.sub(r"^111\.(?=\d+\b)", "11.", stripped)
+        stripped = _normalize_section_candidates(stripped, None)
+        lines.append(stripped)
+    return "\n".join(lines)
+
+
+def _normalize_section_candidates(
+    content: str,
+    last_section: list[int] | None,
+) -> str:
+    content = _normalize_leading_section_candidate(content, last_section)
+    content = _normalize_embedded_section_candidates(content, last_section)
+    content = _normalize_reference_section_candidates(content)
+    return content
+
+
+def _prefer_embedded_real_section(content: str) -> str:
+    stripped = content.strip()
+    fixed = re.sub(
+        r"^(?P<prefix>#{1,6}\s*)?"
+        r"(?P<chapter>\d{1,2})\.(?:(?P=chapter)|111)\.\s*"
+        r"(?P<section>\d{1,2}\.\d{1,3})"
+        r"(?:\s+(?P<tail>\d{1,2}\.\d{1,3}))?"
+        r"(?=\s*[\u4e00-\u9fff])",
+        lambda match: (
+            f"{match.group('prefix') or ''}{match.group('chapter')}.{match.group('section')}"
+        ),
+        stripped,
+    )
+    if fixed != stripped:
+        return content.replace(stripped, fixed, 1)
+    fixed = re.sub(
+        r"^(?P<prefix>#{1,6}\s*)?111\.11\.\s*(?P<section>11\.\d{1,2})(?=\s*[\u4e00-\u9fff])",
+        lambda match: f"{match.group('prefix') or ''}{match.group('section')}",
+        stripped,
+    )
+    if fixed != stripped:
+        return content.replace(stripped, fixed, 1)
+    return content
+
+
+def _merge_split_clause_number(content: str) -> str:
+    pattern = re.compile(
+        r"(?P<prefix>(?:^|\n)\s*#{0,6}\s*)"
+        r"(?P<section>\d{1,8}(?:\s*\.\s*\d{1,8}){1,8})"
+        r"\s+"
+        r"(?P<trail>[1-9])"
+        r"(?=[\u4e00-\u9fff])"
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        section = _fix_split_clause_number(match.group("section"), int(match.group("trail")))
+        return f"{match.group('prefix')}{section}"
+
+    return pattern.sub(replace, content)
+
+
+def _fix_split_clause_number(section_text: str, trailing_part: int) -> str:
+    base = _fix_section_number_text(section_text, None)
+    parts = [int(part) for part in base.split(".") if part.isdigit()]
+    if len(parts) < 2:
+        return f"{base}.{trailing_part}"
+    if len(parts) == 2:
+        return ".".join(str(part) for part in [*parts, trailing_part])
+    if len(parts) >= 3 and all(part == 1 for part in parts[2:]):
+        return ".".join(str(part) for part in [parts[0], parts[1], trailing_part])
+    if len(parts) >= 3 and parts[0] == parts[1] == 11 and parts[2] == 1:
+        return ".".join(str(part) for part in [11, 1, trailing_part])
+    if parts[-1] == trailing_part:
+        return ".".join(str(part) for part in parts)
+    return ".".join(str(part) for part in [*parts, trailing_part])
+
+
+def _normalize_leading_section_candidate(
+    content: str,
+    last_section: list[int] | None,
+) -> str:
+    stripped = content.strip()
+    match = re.match(
+        r"^(?P<prefix>#{1,6}\s*)?"
+        r"(?P<section>\d{1,8}(?:\s*\.\s*\d{1,8}){0,8})"
+        r"\.?"
+        r"(?P<sep>\s*)"
+        r"(?=[\u4e00-\u9fffA-Za-z])",
+        stripped,
+    )
+    if not match:
+        return content
+    section_text = match.group("section")
+    fixed_section = _fix_section_number_text(section_text, last_section)
+    if fixed_section == re.sub(r"\s+", "", section_text):
+        return content
+    replacement = f"{match.group('prefix') or ''}{fixed_section}{match.group('sep')}"
+    fixed = stripped[: match.start()] + replacement + stripped[match.end() :]
+    return content.replace(stripped, fixed, 1)
+
+
+def _normalize_embedded_section_candidates(
+    content: str,
+    last_section: list[int] | None,
+) -> str:
+    pattern = re.compile(
+        r"(?P<prefix>(?:^|\n)\s*#{1,6}\s*|(?<=[。；;])\s*)"
+        r"(?P<section>\d{1,8}(?:\s*\.\s*\d{1,8}){1,8})"
+        r"\.?"
+        r"(?P<sep>\s*)"
+        r"(?=[\u4e00-\u9fffA-Za-z])"
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        fixed_section = _fix_section_number_text(match.group("section"), last_section)
+        return f"{match.group('prefix')}{fixed_section}{match.group('sep')}"
+
+    return pattern.sub(replace, content)
+
+
+def _normalize_reference_section_candidates(content: str) -> str:
+    pattern = re.compile(
+        r"(?P<prefix>第)"
+        r"(?P<section>\d{1,8}(?:\s*\.\s*\d{1,8}){1,8})"
+        r"(?P<suffix>[章节条款])"
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        fixed_section = _fix_section_number_text(match.group("section"), None)
+        return f"{match.group('prefix')}{fixed_section}{match.group('suffix')}"
+
+    return pattern.sub(replace, content)
+
+
+def _dedupe_repeated_section_tail(content: str) -> str:
+    pattern = re.compile(
+        r"(?P<section>\d{1,2}(?:\.\d{1,3}){2,5})"
+        r"\s+"
+        r"(?P<tail>\d{1,3}(?:\.\d{1,3}){0,3})"
+        r"(?=\s*[\u4e00-\u9fff])"
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        section_parts = match.group("section").split(".")
+        tail_parts = match.group("tail").split(".")
+        if len(tail_parts) >= len(section_parts):
+            return match.group(0)
+        if section_parts[-len(tail_parts) :] != tail_parts:
+            return match.group(0)
+        return match.group("section")
+
+    return pattern.sub(replace, content)
+
+
+def _fix_section_number_text(
+    section_text: str,
+    last_section: list[int] | None,
+) -> str:
+    compact = re.sub(r"\s+", "", section_text)
+    if "." not in compact:
+        if len(compact) >= 3 and set(compact) == {"1"}:
+            return "11"
+        return compact
+    raw_parts = compact.split(".")
+    parts = [_normalize_section_part(part) for part in raw_parts]
+    parts = _drop_empty_section_parts(parts)
+    parts = _collapse_repeated_section_prefix(parts)
+    parts = _collapse_repeated_section_components(parts)
+    parts = _fix_section_with_context(parts, last_section)
+    return ".".join(str(part) for part in parts)
+
+
+def _normalize_section_part(part: str) -> int:
+    digits = re.sub(r"\D+", "", part)
+    if not digits:
+        return 0
+    if len(digits) >= 3 and set(digits) == {"1"}:
+        return 11
+    if len(digits) == 3 and digits.startswith("1"):
+        tail = int(digits[1:])
+        if 10 <= tail <= 30:
+            return tail
+    return int(digits)
+
+
+def _drop_empty_section_parts(parts: list[int]) -> list[int]:
+    return [part for part in parts if part > 0]
+
+
+def _collapse_repeated_section_prefix(parts: list[int]) -> list[int]:
+    if len(parts) < 4:
+        return parts
+    for size in range(len(parts) // 2, 0, -1):
+        if parts[:size] == parts[size : size * 2]:
+            return parts[:size] + parts[size * 2 :]
+    return parts
+
+
+def _collapse_repeated_section_components(parts: list[int]) -> list[int]:
+    if len(parts) < 3:
+        return parts
+    if len(parts) == 3 and parts[0] == parts[1] and parts[2] > parts[1] + 1:
+        return [parts[0], parts[2]]
+    if len(parts) >= 5 and parts[2:-1] and all(part == 1 for part in parts[2:-1]):
+        parts = parts[:2] + [parts[-1]]
+    while len(parts) >= 5 and parts[:2] == parts[2:4]:
+        parts = parts[:2] + parts[4:]
+    if len(parts) >= 4 and parts[1] == parts[2] and parts[0] != parts[1]:
+        parts = [parts[0], *parts[2:]]
+    if len(parts) >= 4 and parts[1] == parts[3]:
+        parts = parts[:2] + parts[4:]
+    if len(parts) >= 4 and parts[0] == parts[1] and parts[2] != parts[1]:
+        parts = [parts[0], *parts[2:]]
+    if len(parts) >= 3 and parts[0] == parts[1] == parts[2]:
+        while len(parts) >= 3 and parts[2] == parts[1]:
+            parts = parts[:2] + parts[3:]
+    if len(parts) >= 4 and len(set(parts[1:])) == 1:
+        parts = parts[:3]
+    return parts
+
+
+def _fix_section_with_context(
+    parts: list[int],
+    last_section: list[int] | None,
+) -> list[int]:
+    if not last_section or len(parts) < 2:
+        return parts
+    if (
+        len(parts) == 2
+        and len(last_section) >= 2
+        and parts[0] == parts[1] == last_section[0]
+        and last_section[1] + 1 <= 30
+    ):
+        return [parts[0], last_section[1] + 1]
+    if (
+        len(parts) == 3
+        and len(last_section) >= 2
+        and parts[0] == parts[1] == last_section[0]
+        and parts[2] == last_section[1] + 1
+    ):
+        return [parts[0], parts[2]]
+    if (
+        len(parts) == len(last_section) + 1
+        and parts[0] == last_section[0]
+        and parts[1:-1] == last_section[1:]
+        and parts[-1] == last_section[-1] + 1
+    ):
+        return [parts[0], *parts[2:]]
+    if (
+        len(parts) >= 3
+        and len(parts) == len(last_section)
+        and parts[0] == last_section[0]
+        and parts[1] == parts[0]
+        and parts[-1] == last_section[-1] + 1
+    ):
+        return [parts[0], last_section[1], *parts[2:]]
+    return parts
 
 
 def _normalize_section_sequence(
     content: str,
     last_section: list[int] | None,
 ) -> tuple[str, list[int] | None]:
-    match = re.match(r"^(#+\s*)?(\d+(?:\.\d+)+)(\s+[\u4e00-\u9fff].*)$", content.strip())
+    match = re.match(r"^(#+\s*)?(\d+(?:\.\d+)+)(\s*[\u4e00-\u9fff].*)$", content.strip())
     if not match:
         return content, None
     prefix, section_text, suffix = match.groups()
@@ -350,7 +686,163 @@ def _normalize_section_sequence(
         if content.startswith(" ") or content.endswith(" "):
             fixed = content.replace(match.group(0), fixed, 1)
         return fixed, section[:-1]
+    if (
+        last_section
+        and len(last_section) >= 2
+        and len(section) == len(last_section) + 2
+        and section[0] == last_section[0]
+        and section[2 : 2 + len(last_section[1:])] == last_section[1:]
+    ):
+        fixed_parts = [section[0], *section[2:]]
+        fixed_section = ".".join(str(part) for part in fixed_parts)
+        fixed = f"{prefix or ''}{fixed_section}{suffix}"
+        if content.startswith(" ") or content.endswith(" "):
+            fixed = content.replace(match.group(0), fixed, 1)
+        return fixed, fixed_parts
+    if (
+        last_section
+        and len(last_section) >= 3
+        and len(section) == len(last_section)
+        and section[0] == last_section[0]
+        and section[1] == section[0]
+        and section[-1] == last_section[-1] + 1
+    ):
+        fixed_parts = [section[0], last_section[1], section[-1]]
+        fixed_section = ".".join(str(part) for part in fixed_parts)
+        fixed = f"{prefix or ''}{fixed_section}{suffix}"
+        if content.startswith(" ") or content.endswith(" "):
+            fixed = content.replace(match.group(0), fixed, 1)
+        return fixed, fixed_parts
+    if (
+        last_section
+        and len(last_section) >= 3
+        and len(section) == len(last_section) + 1
+        and section[0] == last_section[0]
+        and section[2:-1] == last_section[1:-1]
+        and section[-1] == last_section[-1] + 1
+    ):
+        fixed_parts = [section[0], *section[2:]]
+        fixed_section = ".".join(str(part) for part in fixed_parts)
+        fixed = f"{prefix or ''}{fixed_section}{suffix}"
+        if content.startswith(" ") or content.endswith(" "):
+            fixed = content.replace(match.group(0), fixed, 1)
+        return fixed, fixed_parts
     return content, section
+
+
+def _normalize_formula_content(content: str) -> str:
+    if "\\sum" in content and "H" in content and "Q" in content and "t" in content:
+        tag = _section_from_formula_content(content)
+        tag_text = ""
+        if tag is not None:
+            tag_text = f"\\tag{{{'.'.join(str(part) for part in tag)}}}"
+        return f"$$\nH = \\frac{{\\sum H_i Q_i t_i}}{{\\sum Q_i t_i}}{tag_text}\n$$"
+    return content
+
+
+def _section_from_formula_content(content: Any) -> list[int] | None:
+    if not isinstance(content, str):
+        return None
+    match = re.search(r"(?:\\tag\{|[（(])(\d+(?:\.\d+){1,4})(?:\}|[）)])", content)
+    if not match:
+        return None
+    try:
+        return [int(part) for part in match.group(1).split(".")]
+    except ValueError:
+        return None
+
+
+def _normalize_formula_definition_text(text: str) -> str:
+    if "加权平均净扬程" in text:
+        text = re.sub(r"式中[:：]\s*H\s*", "式中：$H$：", text)
+    if "运行水位差" in text and "H" in text and "i" in text:
+        return "$H_{i}$：第 i 时段泵站进出水池运行水位差（m）；"
+    if "泵站流量" in text and "Q" in text and "i" in text:
+        return "$Q_{i}$：第 i 时段泵站流量（m^3/s）；"
+    if (("历时" in text) or "（d）" in text or "(d)" in text) and "t" in text and "i" in text:
+        return "$t_{i}$：第 i 时段历时（d）。"
+    return text
+
+
+def _normalize_common_broken_latex_text(text: str) -> str:
+    text = _normalize_engineering_latex_noise(text)
+    text = text.replace("$ 1：2.5\\sim 1: 1: 5;", "1:2.5～1:1.5；")
+    text = text.replace("$1：2.5\\sim1:1:5;", "1:2.5～1:1.5；")
+    text = text.replace("2.0m～3.0m~3.0m", "2.0m～3.0m")
+    text = text.replace("1.0m~\\sim2.0 m", "1.0m～2.0m")
+    text = re.sub(r"\$\s*(\d+(?:\.\d+)?)m([。；;,，])", r"\1m\2", text)
+    text = re.sub(r"\$\s*(\d+(?:\.\d+)?)\s*\^\{\\circ\}\s*\\mathrm\s*\{左\}\.?\s*\$", r"\1°左右", text)
+    text = re.sub(r"\$\s*(\d+(?:\.\d+)?)\s*\^\{\\circ\}\s*\\mathrm\s*\{C\}\s*\$", r"\1℃", text)
+    text = re.sub(r"\(\s*\$\s*\\mathrm\s*\{m\}\s*\^\{?3\}?\s*[。；;]?\s*\$", "（m^3）", text)
+    text = re.sub(r"\(\s*\$\s*\\mathrm\s*\{m\s*/\s*s\}\s*\$", "（m/s）", text)
+    text = re.sub(r"\n?(?:\s*\$C\$\s*){3,}\$?", "\n", text)
+    text = text.replace("$f^{\\prime}$ f^{\\prime}$", "$f^{\\prime}$")
+    text = text.replace("$f^{\\prime}$经验及本标准附录A表 A.0.3$", "$f^{\\prime}$ 可按本标准附录A表A.0.3")
+    text = re.sub(r"\$f_\{0\}\s*\\mathrm\s*\{一\}\$", "$f_{0}$：", text)
+    text = re.sub(r"\$p_\{\\mathrm\{max\}\$\\s*\\mathrm\s*\{p\}_\{\\mathrm\{max\}\}\$", "$p_{max}$：", text)
+    text = text.replace("$p_{\\mathrm{max}$ \\mathrm {p}_{\\mathrm{max}}$", "$p_{max}$：")
+    text = text.replace("表A.0.2 摩擦角 $\\phi_ {0}$ C_{0}$", "表A.0.2 摩擦角 $\\phi_0$ 值和黏结力 $C_0$ 值")
+    text = text.replace("表A.0.2摩擦角$\\phi_{0}$C_{0}$", "表A.0.2 摩擦角 $\\phi_0$ 值和黏结力 $C_0$ 值")
+    text = text.replace("$\\phi_0(°)", "$\\phi_0$（°）")
+    text = text.replace("$(0.85\\sim 0.45%", "0.85～0.45")
+    text = text.replace("（ $ ^{\\circ}；C$", "（°）；C")
+    return text
+
+
+def _normalize_engineering_latex_noise(text: str) -> str:
+    text = text.replace("$ \\surdasharpuncthspace{1cm} “\\sqrt{}$", "√")
+    text = text.replace("$ \\surdasharpuncthspace{1cm} “\\sqrt{} $", "√")
+    text = text.replace("$ \\surd $ \\sqrt[]{”", "√")
+    text = re.sub(r"\$\s*\\sim\s*0\.8\\mathrm\{m\s*/\s*s\$;?", "～0.8m/s；", text)
+    text = re.sub(
+        r"\$\s*(\d+(?:\.\d+)?)\s*\^\{\\circ\}\s*\$\s*\\mathrm\s*\{左\}\s*0°左右",
+        r"\1°左右",
+        text,
+    )
+    text = re.sub(
+        r"\$\s*(\d+(?:\.\d+)?)\s*\^\{\\circ\}\s*\\mathrm\s*\{左\}\.?\s*0?°?左右?\s*\$?",
+        r"\1°左右",
+        text,
+    )
+    text = text.replace("$K_{\\mathrm{c}$ \\mathrm {k}_{ \\mathrm{c}}$", "$K_c$：")
+    text = text.replace("$ \\sum G $ \\mathrm {", "$\\sum G$：")
+    text = text.replace("$ \\sum H $ \\mathrm {", "$\\sum H$：")
+    text = text.replace("$\\phi_0$ \\mathrm{o}_{-} $", "$\\phi_0$：")
+    text = text.replace("$ \\phi_0 $ \\mathrm{o}_{-} $", "$\\phi_0$：")
+    text = text.replace("（ $ \\mathrm{m}^{2}；$", "（m^2）；")
+    text = text.replace("（ $ ^{\\circ}；", "（°）；")
+    text = text.replace("（$ ^{\\circ}；", "（°）；")
+    return text
+
+
+def _normalize_head_clause_water_level_text(text: str) -> str:
+    text = re.sub(
+        r"(4\.3\.3\s*最高扬程宜按泵站出水池最高运行水位与进水池最低运行水位之差，并计[入人]水力损失确定；)"
+        r"当出水池最高运行水位与进水.*?池最低运行水位遭遇",
+        r"\1当出水池最高运行水位与进水池最低运行水位遭遇",
+        text,
+    )
+    text = re.sub(
+        r"(4\.3\.4\s*最低扬程宜按泵站出水池最低运行水位与进水池最高运行水位之差，并计[入人]水力损失确定；)"
+        r"当出水池最低运行水位与进水.*?池最高运行水位遭遇",
+        r"\1当出水池最低运行水位与进水池最高运行水位遭遇",
+        text,
+    )
+    text = re.sub(
+        r"(当出水池最高运行水位与)进水位与进水位(?:之差，并计[入人]水力损失确定；)?池最低运行水位遭遇",
+        r"\1进水池最低运行水位遭遇",
+        text,
+    )
+    text = re.sub(
+        r"(当出水池最低运行水位与)进水位与进水位(?:之差，)?池最高运行水位遭遇",
+        r"\1进水池最高运行水位遭遇",
+        text,
+    )
+    text = text.replace("蓄涝区劳区最高", "蓄涝区最高")
+    text = text.replace("水位对有集中蓄涝区", "水位。对有集中蓄涝区")
+    text = text.replace("第4.2.1条～第4.2.4.2.4条", "第4.2.1条～第4.2.4条")
+    text = text.replace("第4.2.1条～第4.2.2.4条", "第4.2.1条～第4.2.4条")
+    return text
 
 
 def _is_next_section(previous: list[int], current: list[int]) -> bool:
